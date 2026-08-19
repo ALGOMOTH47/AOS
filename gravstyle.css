@@ -1,0 +1,73 @@
+/* Gravity Well - Game Description Page (Purply Frutiger Aero) */
+
+body {
+    /* A solid, deep space dark purple background */
+    background-color: #130924; 
+    font-family: "Segoe UI", "Trebuchet MS", "Lucida Grande", sans-serif;
+    color: #e3d9f2;
+    margin: 0;
+    padding: 20px;
+    text-align: center;
+}
+
+/* --- The Glassy Container --- */
+main, header, footer {
+    /* Dark, purple-tinted translucent glass */
+    background: rgba(40, 20, 60, 0.4);
+    border: 1px solid rgba(160, 100, 220, 0.3);
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 2px 5px rgba(255, 255, 255, 0.1);
+    padding: 20px;
+    margin-bottom: 20px;
+    max-width: 800px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* --- Glossy Buttons (Matching your gray game menu) --- */
+.game-button, nav a {
+    text-decoration: none;
+    color: #222222;
+    font-weight: bold;
+    font-size: 1.1em;
+    padding: 10px 30px;
+    margin: 10px;
+    display: inline-block;
+    border-radius: 25px; /* Pill shape to match your game UI */
+    
+    /* Glossy gray gradient */
+    background: linear-gradient(to bottom, #e6e6e6 0%, #b3b3b3 45%, #999999 50%, #cccccc 100%);
+    border: 2px solid #555555;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.5), inset 0 2px 3px rgba(255,255,255,0.7);
+    text-shadow: 1px 1px 0px rgba(255, 255, 255, 0.4);
+    transition: all 0.2s;
+}
+
+.game-button:hover, nav a:hover {
+    /* Lights up with a glossy neon purple on hover */
+    background: linear-gradient(to bottom, #eed9ff 0%, #c47aff 45%, #a633ff 50%, #d499ff 100%);
+    border-color: #8c1aff;
+    box-shadow: 0 4px 12px rgba(166, 51, 255, 0.6), inset 0 2px 3px rgba(255,255,255,0.8);
+    color: #ffffff;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* --- Typography & Accents --- */
+h1, h2, h3 {
+    /* Bright neon purple to match the gravity beams */
+    color: #cc33ff;
+    text-shadow: 0px 0px 10px rgba(204, 51, 255, 0.5), 2px 2px 4px rgba(0,0,0,0.8);
+    font-weight: bold;
+    margin-top: 0;
+}
+
+/* --- Game Screenshots --- */
+img {
+    border-radius: 12px;
+    /* Adds a glowing purple border to your images */
+    border: 2px solid #a633ff; 
+    box-shadow: 0 0 20px rgba(166, 51, 255, 0.4);
+    display: block;
+    margin: 20px auto;
+    max-width: 90%;
+}
