@@ -1,7 +1,7 @@
 /* --- Late '90s / Early 2000s Retro Blue Aesthetic --- */
 
 body {
-    background-color: #C7FFF3; /* Classic deep web blue */
+    background-color: #000066; /* Classic deep web blue */
     color: #ffffff;
     font-family: Arial, Helvetica, sans-serif;
     margin: 0;
@@ -24,7 +24,7 @@ header {
 
 header h1 {
     font-family: "Courier New", Courier, monospace;
-    color: #000000; /* Neon cyan */
+    color: #00ffff; /* Neon cyan */
     font-size: 2rem;
     text-shadow: 2px 2px #000000;
     margin-bottom: 10px;
@@ -58,7 +58,7 @@ nav a:active, nav a:hover {
 
 /* --- Main Content Area --- */
 main {
-    background-color: #00ffff;
+    background-color: #000080;
     border: 3px inset #3366ff;
     padding: 20px;
 }
@@ -68,8 +68,8 @@ section {
 }
 
 section h2 {
-    color: #00fffff;
-    border-bottom: 1px dashed #000000;
+    color: #00ffff;
+    border-bottom: 1px dashed #3366ff;
     padding-bottom: 5px;
     margin-bottom: 15px;
 }
@@ -81,12 +81,12 @@ p {
 
 /* --- Footer --- */
 footer {
-    background-color: #00ffff;
+    background-color: #000099;
     border: 2px outset #3366ff;
     text-align: center;
     padding: 10px;
     font-size: 0.8rem;
-    color: #000000;
+    color: #99ccff;
 }
 
 footer p {
