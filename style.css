@@ -24,7 +24,7 @@ header {
 
 header h1 {
     font-family: "Courier New", Courier, monospace;
-    color: #00ffff; /* Neon cyan */
+    color: #000000; /* Neon cyan */
     font-size: 2rem;
     text-shadow: 2px 2px #000000;
     margin-bottom: 10px;
@@ -58,7 +58,7 @@ nav a:active, nav a:hover {
 
 /* --- Main Content Area --- */
 main {
-    background-color: #000000;
+    background-color: #00ffff;
     border: 3px inset #3366ff;
     padding: 20px;
 }
@@ -68,7 +68,7 @@ section {
 }
 
 section h2 {
-    color: #00ffff;
+    color: #00fffff;
     border-bottom: 1px dashed #000000;
     padding-bottom: 5px;
     margin-bottom: 15px;
@@ -81,12 +81,12 @@ p {
 
 /* --- Footer --- */
 footer {
-    background-color: #000099;
+    background-color: #00ffff;
     border: 2px outset #3366ff;
     text-align: center;
     padding: 10px;
     font-size: 0.8rem;
-    color: #99ccff;
+    color: #000000;
 }
 
 footer p {
