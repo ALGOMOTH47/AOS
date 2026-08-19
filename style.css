@@ -1,95 +1,70 @@
-/* --- Late '90s / Early 2000s Retro Blue Aesthetic --- */
+/* AOS Studios - Frutiger Aero Theme (Centered & Solid Background) */
 
 body {
-    background-color: #000066; /* Classic deep web blue */
-    color: #ffffff;
-    font-family: Arial, Helvetica, sans-serif;
+    /* A solid, nostalgic sky-blue background */
+    background-color: #a0d8ef; 
+    font-family: "Segoe UI", "Trebuchet MS", "Lucida Grande", sans-serif;
+    color: #333333;
     margin: 0;
-    padding: 10px;
+    padding: 20px;
+    text-align: center; /* Centers all text globally */
 }
 
-/* --- Layout Container --- */
-body > * {
-    max-width: 750px;
-    margin: 0 auto 10px auto;
+/* --- The Glassy Container --- */
+main, header, footer {
+    background: rgba(255, 255, 255, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1), inset 0 2px 5px rgba(255, 255, 255, 0.9);
+    padding: 20px;
+    margin-bottom: 20px;
+    max-width: 800px;
+    
+    /* This keeps the glass boxes centered on large screens */
+    margin-left: auto;
+    margin-right: auto;
 }
 
-/* --- Header --- */
-header {
-    background-color: #000099;
-    border: 3px outset #3366ff;
-    padding: 15px;
-    text-align: center;
-}
-
-header h1 {
-    font-family: "Courier New", Courier, monospace;
-    color: #00ffff; /* Neon cyan */
-    font-size: 2rem;
-    text-shadow: 2px 2px #000000;
-    margin-bottom: 10px;
-}
-
-/* --- Navigation --- */
+/* --- Glossy Navigation Buttons --- */
 nav ul {
     list-style-type: none;
     padding: 0;
-    margin: 10px 0 0 0;
     display: flex;
-    justify-content: center;
-    gap: 15px;
+    justify-content: center; /* Centers the navigation buttons side-by-side */
+    gap: 120px;
 }
 
 nav a {
-    background-color: #0000cc;
-    color: #ffff00; /* Classic bright yellow links */
-    padding: 4px 8px;
-    border: 2px outset #6699ff;
     text-decoration: none;
+    color: #0c436b;
     font-weight: bold;
-    font-size: 0.9rem;
+    padding: 10px 20px;
+    border-radius: 20px;
+    /* The glossy pill-button effect */
+    background: linear-gradient(to bottom, #ffffff 0%, #e1f2fb 45%, #b1dcf1 50%, #d4eefc 100%);
+    border: 1px solid #7cbcdb;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1), inset 0 1px 2px rgba(255,255,255,0.8);
+    text-shadow: 1px 1px 0px rgba(255, 255, 255, 0.8);
+    transition: all 0.2s;
 }
 
-nav a:active, nav a:hover {
-    border-style: inset; /* Classic button click effect */
-    background-color: #0000ff;
-    color: #00ffff;
+nav a:hover {
+    background: linear-gradient(to bottom, #ffffff 0%, #edf7fc 45%, #c8e7f5 50%, #e6f5fd 100%);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15), inset 0 1px 3px rgba(255,255,255,1);
+    color: #063152;
 }
 
-/* --- Main Content Area --- */
-main {
-    background-color: #000080;
-    border: 3px inset #3366ff;
-    padding: 20px;
+/* --- Typography & Images --- */
+h1 {
+    color: #0a4f70;
+    text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.9);
+    font-weight: normal;
+    margin-top: 0;
 }
 
-section {
-    background-color: transparent;
-}
-
-section h2 {
-    color: #00ffff;
-    border-bottom: 1px dashed #3366ff;
-    padding-bottom: 5px;
-    margin-bottom: 15px;
-}
-
-p {
-    color: #cccccc;
-    font-size: 0.95rem;
-}
-
-/* --- Footer --- */
-footer {
-    background-color: #000099;
-    border: 2px outset #3366ff;
-    text-align: center;
-    padding: 10px;
-    font-size: 0.8rem;
-    color: #99ccff;
-}
-
-footer p {
-    color: #99ccff;
-    margin: 0;
+img {
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    display: block;
+    margin: 15px auto; /* Forces the image to sit dead center */
 }
