@@ -14,7 +14,7 @@ window.CONFIG.fileSystem = {
         
     },
 
-    "TAFE_STUFF": 
+    "TAFE_PROJECTS": 
  {
         "PLAYLIST.VID": "https://www.youtube.com/watch?v=HWPR8MLdAlw&list=PLKJYMBzvCsqs",
         
