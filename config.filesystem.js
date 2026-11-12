@@ -9,7 +9,7 @@ window.CONFIG.fileSystem = {
     },
 
  "CODENAME_OBILISK": {
-        "PLAYLIST.VID": "https://www.youtube.com/watch?v=-Tcu1Q6pnc0",
+        "PLAYLIST.VID": "https://www.youtube.com/playlist?list=PLS7zAjy7SF9U",
         
     },
 
