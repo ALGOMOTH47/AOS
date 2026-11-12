@@ -147,43 +147,53 @@
         const CONFIG = Object.assign({
             systemName: "CRYONET v3.2",
             bootDelay: 250,
-            sessionCookieName: "cryonet_session",
-            sessionDays: 30,
+            autoTypeSpeed: 65, // Milliseconds per simulated keystroke
+            storageKey: "cryonet_saved_auth",
             users: {},
             fileSystem: {},
             executables: {}
         }, window.CONFIG);
 
         // =========================================================================
-        // COOKIE SESSION HELPERS
+        // SAVED SESSION HELPERS (Safe localStorage + cookie fallback)
         // =========================================================================
-        function saveSessionCookie(username, password) {
-            const payload = encodeURIComponent(JSON.stringify({ u: username, p: password }));
-            const expires = new Date(Date.now() + CONFIG.sessionDays * 864e5).toUTCString();
-            document.cookie = `${CONFIG.sessionCookieName}=${payload}; expires=${expires}; path=/; SameSite=Lax`;
+        function saveLoginCredentials(username, password) {
+            const payload = JSON.stringify({ u: username, p: password });
+            try {
+                localStorage.setItem(CONFIG.storageKey, payload);
+            } catch (e) {
+                // Fallback if storage is restricted
+                document.cookie = `${CONFIG.storageKey}=${encodeURIComponent(payload)}; path=/; max-age=2592000; SameSite=Lax`;
+            }
         }
 
-        function getSavedSession() {
-            const prefix = `${CONFIG.sessionCookieName}=`;
-            const cookies = document.cookie.split("; ");
-            for (const item of cookies) {
-                if (item.startsWith(prefix)) {
-                    try {
-                        const data = JSON.parse(decodeURIComponent(item.slice(prefix.length)));
-                        const userRecord = CONFIG.users[data.u];
-                        if (userRecord && userRecord.password === data.p) {
-                            return { username: data.u, record: userRecord };
-                        }
-                    } catch (e) {
-                        clearSessionCookie();
-                    }
+        function getSavedCredentials() {
+            let raw = null;
+            try {
+                raw = localStorage.getItem(CONFIG.storageKey);
+            } catch (e) {
+                const match = document.cookie.match(new RegExp(`(?:^|; )${CONFIG.storageKey}=([^;]*)`));
+                if (match) raw = decodeURIComponent(match[1]);
+            }
+
+            if (!raw) return null;
+            try {
+                const data = JSON.parse(raw);
+                const userRecord = CONFIG.users[data.u];
+                if (userRecord && userRecord.password === data.p) {
+                    return { username: data.u, password: data.p, record: userRecord };
                 }
+            } catch (e) {
+                clearSavedCredentials();
             }
             return null;
         }
 
-        function clearSessionCookie() {
-            document.cookie = `${CONFIG.sessionCookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+        function clearSavedCredentials() {
+            try {
+                localStorage.removeItem(CONFIG.storageKey);
+            } catch (e) {}
+            document.cookie = `${CONFIG.storageKey}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
         }
 
         // =========================================================================
@@ -403,7 +413,7 @@
                 }
             },
             LOGOUT: {
-                description: "Clears saved login cookie and logs out.",
+                description: "Clears saved login and logs out.",
                 execute: (args, ctx) => {
                     ctx.logout();
                     return "";
@@ -421,7 +431,7 @@
         const terminalEl = document.getElementById("terminal");
         const appViewport = document.getElementById("app-viewport");
 
-        let state = "BOOT"; // BOOT | LOGIN_USER | LOGIN_PASS | SHELL | APP
+        let state = "BOOT"; // BOOT | AUTO_LOGIN | LOGIN_USER | LOGIN_PASS | SHELL | APP
         let pendingUser = "";
         let currentUser = null;
         let currentPath = [];
@@ -489,12 +499,15 @@
             if (state === "LOGIN_USER") {
                 promptLabel.textContent = "LOGIN: ";
                 cmdInput.type = "text";
+                cmdInput.readOnly = false;
             } else if (state === "LOGIN_PASS") {
                 promptLabel.textContent = "PASSWORD: ";
                 cmdInput.type = "password";
+                cmdInput.readOnly = false;
             } else if (state === "SHELL") {
                 promptLabel.textContent = `${getPathString()}>`;
                 cmdInput.type = "text";
+                cmdInput.readOnly = false;
             }
             inputRow.style.display = "flex";
             cmdInput.value = "";
@@ -508,6 +521,50 @@
             currentUser = null;
             currentPath = [];
             updatePrompt();
+        }
+
+        // Simulates typing out saved username & password keystrokes automatically
+        function runAutoLogin(saved) {
+            state = "AUTO_LOGIN";
+            cmdInput.readOnly = true;
+            cmdInput.type = "text";
+            cmdInput.value = "";
+            promptLabel.textContent = "LOGIN: ";
+            inputRow.style.display = "flex";
+            cmdInput.focus();
+
+            function typeText(text, onComplete) {
+                let idx = 0;
+                function step() {
+                    if (idx < text.length) {
+                        cmdInput.value += text[idx];
+                        idx++;
+                        setTimeout(step, CONFIG.autoTypeSpeed);
+                    } else {
+                        setTimeout(onComplete, 180);
+                    }
+                }
+                setTimeout(step, 200);
+            }
+
+            // 1. Type the username
+            typeText(saved.username, () => {
+                printLine(`LOGIN: ${saved.username}`);
+                pendingUser = saved.username;
+                cmdInput.value = "";
+                cmdInput.type = "password";
+                promptLabel.textContent = "PASSWORD: ";
+
+                // 2. Type the password
+                typeText(saved.password, () => {
+                    printLine(`PASSWORD: ${"*".repeat(saved.password.length)}`);
+                    currentUser = saved.username;
+                    pendingUser = "";
+                    state = "SHELL";
+                    printLine(`\n${saved.record.welcomeMessage || "Access granted."}\n`);
+                    updatePrompt();
+                });
+            });
         }
 
         function bootSequence() {
@@ -530,13 +587,9 @@
                     i++;
                     setTimeout(nextBootLine, CONFIG.bootDelay);
                 } else {
-                    const savedSession = getSavedSession();
-                    if (savedSession) {
-                        currentUser = savedSession.username;
-                        state = "SHELL";
-                        printLine(`\n[COOKIE] Restored active session for ${currentUser}.`);
-                        printLine(`${savedSession.record.welcomeMessage || "Access granted."}\n`);
-                        updatePrompt();
+                    const saved = getSavedCredentials();
+                    if (saved) {
+                        runAutoLogin(saved);
                     } else {
                         startLogin();
                     }
@@ -546,6 +599,8 @@
         }
 
         function handleInput(rawValue) {
+            if (state === "AUTO_LOGIN" || state === "BOOT") return;
+
             if (state === "LOGIN_USER") {
                 printLine(`LOGIN: ${rawValue}`);
                 const userKey = rawValue.trim().toUpperCase();
@@ -564,7 +619,7 @@
                 const userRecord = CONFIG.users[pendingUser];
                 if (userRecord && userRecord.password === rawValue) {
                     currentUser = pendingUser;
-                    saveSessionCookie(currentUser, rawValue);
+                    saveLoginCredentials(currentUser, rawValue);
                     state = "SHELL";
                     printLine(`\n${userRecord.welcomeMessage || "Access granted."}\n`);
                     updatePrompt();
@@ -600,9 +655,9 @@
                         getCurrentDirObject,
                         clearScreen,
                         logout: () => {
-                            clearSessionCookie();
+                            clearSavedCredentials();
                             clearScreen();
-                            printLine("Session cookie purged. Logged out.\n", "dim-line");
+                            printLine("Saved credentials cleared. Logged out.\n", "dim-line");
                             startLogin();
                         }
                     };
@@ -640,6 +695,32 @@
         }
 
         cmdInput.addEventListener("keydown", (e) => {
+            if (state === "AUTO_LOGIN" || state === "BOOT") {
+                e.preventDefault();
+                return;
+            }
+
             if (e.key === "Enter") {
                 handleInput(cmdInput.value);
-            } else
+            } else if (state === "SHELL" && e.key === "ArrowUp") {
+                e.preventDefault();
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    cmdInput.value = commandHistory[historyIndex];
+                }
+            } else if (state === "SHELL" && e.key === "ArrowDown") {
+                e.preventDefault();
+                if (historyIndex < commandHistory.length - 1) {
+                    historyIndex++;
+                    cmdInput.value = commandHistory[historyIndex];
+                } else {
+                    historyIndex = commandHistory.length;
+                    cmdInput.value = "";
+                }
+            }
+        });
+
+        window.onload = bootSequence;
+    </script>
+</body>
+</html>
