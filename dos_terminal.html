@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CRYONET Terminal SYSTEM</title>
+    <style>
+        :root {
+            --outer-bg: #050505;
+            --bg-color: #0c0c0c;
+            --text-color: #E2A76F;
+            --dim-color: #E2A76F;
+            --error-color: #E2A76F;
+            --font-stack: 'Courier New', Courier, monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--outer-bg);
+            color: var(--text-color);
+            font-family: var(--font-stack);
+            font-size: 16px;
+            line-height: 1.4;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-shadow: 0 0 4px rgba(226, 167, 111, 0.4);
+        }
+
+        /* 4:3 CRT Monitor Frame */
+        #crt-frame {
+            position: relative;
+            aspect-ratio: 4 / 3;
+            width: min(100vw, calc(100vh * (4 / 3)));
+            height: min(100vh, calc(100vw * (3 / 4)));
+            background-color: var(--bg-color);
+            padding: 24px;
+            overflow: hidden;
+            border: 2px solid #E2A76F;
+            box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 0, 0, 0.9);
+        }
+
+        /* Subtle CRT scanline overlay confined to the 4:3 screen */
+        #crt-frame::after {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%, 
+                rgba(0, 0, 0, 0.25) 50%
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #terminal {
+            height: 100%;
+            width: 100%;
+            overflow-y: auto;
+            scrollbar-width: none;
+        }
+        #terminal::-webkit-scrollbar {
+            display: none;
+        }
+
+        /* Fullscreen container for running .EXE files and Media Player */
+        #app-viewport {
+            display: none;
+            height: 100%;
+            width: 100%;
+            overflow-y: auto;
+            scrollbar-width: none;
+        }
+        #app-viewport::-webkit-scrollbar {
+            display: none;
+        }
+
+        .output-line {
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin-bottom: 2px;
+        }
+
+        .error-line {
+            color: var(--error-color);
+            text-shadow: 0 0 4px rgba(226, 167, 111, 0.6);
+        }
+
+        .dim-line {
+            color: var(--dim-color);
+        }
+
+        .input-line {
+            display: flex;
+            align-items: center;
+        }
+
+        .prompt-label {
+            white-space: pre;
+            margin-right: 4px;
+        }
+
+        #cmd-input {
+            background: transparent;
+            border: none;
+            color: var(--text-color);
+            font-family: var(--font-stack);
+            font-size: 16px;
+            flex: 1;
+            outline: none;
+            caret-color: var(--text-color);
+            text-shadow: 0 0 4px rgba(226, 167, 111, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div id="crt-frame">
+        <div id="terminal" onclick="if(state !== 'APP') document.getElementById('cmd-input').focus()">
+            <div id="output"></div>
+            <div class="input-line" id="input-row" style="display: none;">
+                <span class="prompt-label" id="prompt-label"></span>
+                <input type="text" id="cmd-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+            </div>
+        </div>
+        <!-- Dedicated screen surface for .EXE programs and Media Playback -->
+        <div id="app-viewport"></div>
+    </div>
+
+    <!-- External Configuration & Executable Files -->
+    <script src="config.users.js"></script>
+    <script src="config.filesystem.js"></script>
+    <script src="config.executables.js"></script>
+
+    <script>
+        // =========================================================================
+        // BASE SETTINGS & EXTERNAL CONFIG MERGE
+        // =========================================================================
+        const CONFIG = Object.assign({
+            systemName: "CRYONET v3.2",
+            bootDelay: 250,
+            users: {},
+            fileSystem: {},
+            executables: {}
+        }, window.CONFIG);
+
+        // =========================================================================
+        // YOUTUBE LINK & PLAYLIST DETECTOR + EMBEDDED MEDIA PLAYER
+        // Supports:
+        //   - Single videos: youtube.com/watch?v=ID, youtu.be/ID, shorts/ID
+        //   - Standalone playlists: youtube.com/playlist?list=PLAYLIST_ID
+        //   - Video inside a playlist: youtube.com/watch?v=ID&list=PLAYLIST_ID
+        // =========================================================================
+        function parseYouTubeMedia(text) {
+            if (typeof text !== "string") return null;
+
+            const trimmed = text.trim();
+            // Check if the string actually looks like a YouTube URL
+            if (!/(?:youtube\.com|youtu\.be)/i.test(trimmed)) return null;
+
+            const videoMatch = trimmed.match(
+                /(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:[^#\s]*&)?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+            );
+            const listMatch = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+
+            const videoId = videoMatch ? videoMatch[1] : null;
+            const listId = listMatch ? listMatch[1] : null;
+
+            if (!videoId && !listId) return null;
+
+            // Case 1: Standalone playlist URL (no specific starting video ID)
+            if (!videoId && listId) {
+                return {
+                    embedUrl: `https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&rel=0`,
+                    label: `PLAYLIST // ${listId}`
+                };
+            }
+
+            // Case 2: Video with a playlist parameter (?v=ID&list=PLAYLIST_ID)
+            if (videoId && listId) {
+                return {
+                    embedUrl: `https://www.youtube.com/embed/${videoId}?list=${listId}&autoplay=1&rel=0`,
+                    label: `STREAM // ${videoId} [LIST: ${listId}]`
+                };
+            }
+
+            // Case 3: Single video URL
+            return {
+                embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`,
+                label: `STREAM ID: ${videoId}`
+            };
+        }
+
+        function launchVideoPlayer(mediaInfo, sourceFileName) {
+            state = "APP";
+            clearScreen();
+            terminalEl.style.display = "none";
+            appViewport.innerHTML = "";
+            appViewport.style.display = "block";
+
+            appViewport.innerHTML = `
+                <div style="border: 1px solid #E2A76F; padding: 12px; height: 100%; display: flex; flex-direction: column; justify-content: space-between; gap: 10px;">
+                    <div style="background: #E2A76F; color: #0c0c0c; padding: 4px 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+                        <span>CRYONET MEDIA DECODER // ${sourceFileName}</span>
+                        <span>${mediaInfo.label}</span>
+                    </div>
+                    <div style="flex: 1; border: 1px solid #E2A76F; background: #000; position: relative; overflow: hidden;">
+                        <iframe
+                            src="${mediaInfo.embedUrl}"
+                            style="width: 100%; height: 100%; border: none;"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowfullscreen>
+                        </iframe>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 14px;">PRESS [ESC] OR CLICK EXIT TO RETURN</span>
+                        <button id="btn-close-video" style="background: #E2A76F; color: #0c0c0c; border: none; padding: 4px 12px; font-family: inherit; font-weight: bold; cursor: pointer;">
+                            [ EXIT PLAYER ]
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            const closePlayer = () => {
+                document.removeEventListener("keydown", onEsc);
+                appViewport.innerHTML = "";
+                appViewport.style.display = "none";
+                terminalEl.style.display = "block";
+                state = "SHELL";
+                printLine(`Closed media stream: ${sourceFileName}`);
+                updatePrompt();
+            };
+
+            const onEsc = (e) => {
+                if (e.key === "Escape") closePlayer();
+            };
+
+            document.addEventListener("keydown", onEsc);
+            appViewport.querySelector("#btn-close-video").onclick = closePlayer;
+        }
+
+        // =========================================================================
+        // CUSTOM COMMANDS
+        // Add new commands here. Key must be UPPERCASE.
+        // =========================================================================
+        const COMMANDS = {
+            HELP: {
+                description: "Displays a list of available commands.",
+                execute: (args, ctx) => {
+                    let lines = [
+                        "Available commands:",
+                        "  <FILE.EXE> - Executes a program in the current directory.",
+                        "  <FILE.VID> - Plays a YouTube video or playlist file."
+                    ];
+                    for (const [cmd, info] of Object.entries(COMMANDS)) {
+                        lines.push(`  ${cmd.padEnd(10)} - ${info.description}`);
+                    }
+                    return lines.join("\n");
+                }
+            },
+            DIR: {
+                description: "Displays a list of files and subdirectories in a directory.",
+                execute: (args, ctx) => {
+                    const dirObj = ctx.getCurrentDirObject();
+                    const entries = Object.entries(dirObj);
+                    let out = [` Directory of ${ctx.getPathString()}\n`];
+                    
+                    if (ctx.currentPath.length > 0) {
+                        out.push("  .            <DIR>");
+                        out.push("  ..           <DIR>");
+                    }
+
+                    let fileCount = 0;
+                    let dirCount = 0;
+
+                    for (const [name, content] of entries) {
+                        if (typeof content === "object" && content !== null) {
+                            out.push(`  ${name.padEnd(12)} <DIR>`);
+                            dirCount++;
+                        } else {
+                            const size = String(content.length).padStart(8, " ");
+                            out.push(`  ${name.padEnd(12)} ${size} bytes`);
+                            fileCount++;
+                        }
+                    }
+
+                    out.push(`\n        ${fileCount} file(s)`);
+                    out.push(`        ${dirCount} dir(s)`);
+                    return out.join("\n");
+                }
+            },
+            CD: {
+                description: "Displays the name of or changes the current directory.",
+                execute: (args, ctx) => {
+                    if (!args[0]) return ctx.getPathString();
+                    const target = args[0].toUpperCase();
+
+                    if (target === "\\" || target === "/") {
+                        ctx.currentPath = [];
+                        return "";
+                    }
+                    if (target === "..") {
+                        if (ctx.currentPath.length > 0) ctx.currentPath.pop();
+                        return "";
+                    }
+                    if (target === ".") return "";
+
+                    const dirObj = ctx.getCurrentDirObject();
+                    if (dirObj[target] && typeof dirObj[target] === "object") {
+                        ctx.currentPath.push(target);
+                        return "";
+                    }
+                    return { error: `Invalid directory: ${args[0]}` };
+                }
+            },
+            TYPE: {
+                description: "Displays a text file or plays an embedded video/playlist.",
+                execute: (args, ctx) => {
+                    if (!args[0]) return { error: "Required parameter missing" };
+                    const fileName = args[0].toUpperCase();
+                    const dirObj = ctx.getCurrentDirObject();
+
+                    if (!(fileName in dirObj)) {
+                        return { error: `File not found - ${args[0]}` };
+                    }
+                    if (typeof dirObj[fileName] === "object") {
+                        return { error: `Access denied - ${args[0]} is a directory` };
+                    }
+                    if (fileName.endsWith(".EXE")) {
+                        return { error: `Cannot display binary executable - Run ${fileName} directly.` };
+                    }
+
+                    const fileContent = dirObj[fileName];
+                    const mediaInfo = parseYouTubeMedia(fileContent);
+
+                    if (mediaInfo) {
+                        launchVideoPlayer(mediaInfo, fileName);
+                        return "";
+                    }
+
+                    return fileContent;
+                }
+            },
+            ECHO: {
+                description: "Displays messages.",
+                execute: (args) => args.join(" ")
+            },
+            VER: {
+                description: "Displays the OS version.",
+                execute: () => `\n${CONFIG.systemName}\n`
+            },
+            WHOAMI: {
+                description: "Displays the current logged-in user.",
+                execute: (args, ctx) => `Current user: ${ctx.currentUser}`
+            },
+            CLS: {
+                description: "Clears the screen.",
+                execute: (args, ctx) => {
+                    ctx.clearScreen();
+                    return "";
+                }
+            },
+            LOGOUT: {
+                description: "Logs out of the current session.",
+                execute: (args, ctx) => {
+                    ctx.logout();
+                    return "";
+                }
+            }
+        };
+
+        // =========================================================================
+        // CORE TERMINAL ENGINE & EXECUTABLE LOADER
+        // =========================================================================
+        const outputEl = document.getElementById("output");
+        const inputRow = document.getElementById("input-row");
+        const promptLabel = document.getElementById("prompt-label");
+        const cmdInput = document.getElementById("cmd-input");
+        const terminalEl = document.getElementById("terminal");
+        const appViewport = document.getElementById("app-viewport");
+
+        let state = "BOOT"; // BOOT | LOGIN_USER | LOGIN_PASS | SHELL | APP
+        let pendingUser = "";
+        let currentUser = null;
+        let currentPath = [];
+        let commandHistory = [];
+        let historyIndex = -1;
+
+        function printLine(text, className = "") {
+            if (text === "" || text === null || text === undefined) return;
+            const div = document.createElement("div");
+            div.className = `output-line ${className}`.trim();
+            div.textContent = text;
+            outputEl.appendChild(div);
+            terminalEl.scrollTop = terminalEl.scrollHeight;
+        }
+
+        function clearScreen() {
+            outputEl.innerHTML = "";
+        }
+
+        function getPathString() {
+            return "C:\\" + currentPath.join("\\");
+        }
+
+        function getCurrentDirObject() {
+            let obj = CONFIG.fileSystem;
+            for (const folder of currentPath) {
+                obj = obj[folder];
+            }
+            return obj;
+        }
+
+        function launchExecutable(exeName, args) {
+            const handler = CONFIG.executables[exeName];
+            if (typeof handler !== "function") {
+                printLine(`PROGRAM ERROR: Missing binary handler for ${exeName} in config.executables.js`, "error-line");
+                return;
+            }
+
+            state = "APP";
+            clearScreen();
+            terminalEl.style.display = "none";
+            appViewport.innerHTML = "";
+            appViewport.style.display = "block";
+
+            const appContext = {
+                container: appViewport,
+                args: args,
+                user: currentUser,
+                path: getPathString(),
+                fileSystem: CONFIG.fileSystem,
+                exit: (exitMessage = "") => {
+                    appViewport.innerHTML = "";
+                    appViewport.style.display = "none";
+                    terminalEl.style.display = "block";
+                    state = "SHELL";
+                    if (exitMessage) printLine(exitMessage);
+                    updatePrompt();
+                }
+            };
+
+            handler(appContext);
+        }
+
+        function updatePrompt() {
+            if (state === "LOGIN_USER") {
+                promptLabel.textContent = "LOGIN: ";
+                cmdInput.type = "text";
+            } else if (state === "LOGIN_PASS") {
+                promptLabel.textContent = "PASSWORD: ";
+                cmdInput.type = "password";
+            } else if (state === "SHELL") {
+                promptLabel.textContent = `${getPathString()}>`;
+                cmdInput.type = "text";
+            }
+            inputRow.style.display = "flex";
+            cmdInput.value = "";
+            cmdInput.focus();
+            terminalEl.scrollTop = terminalEl.scrollHeight;
+        }
+
+        function startLogin() {
+            state = "LOGIN_USER";
+            pendingUser = "";
+            currentUser = null;
+            currentPath = [];
+            updatePrompt();
+        }
+
+        function bootSequence() {
+            inputRow.style.display = "none";
+            clearScreen();
+            const bootLines = [
+                "BIOS Date 01/15/94 14:22:51 Ver 1.02",
+                "CPU: ATOM 86605XC 66MHz",
+                "Memory Test: 16384K OK\n",
+                "Initializing Keyboard... OK",
+                "========================================",
+                "CRYONET v3.2 - AUTHORIZED ACCESS ONLY",
+                "========================================"
+            ];
+
+            let i = 0;
+            function nextBootLine() {
+                if (i < bootLines.length) {
+                    printLine(bootLines[i], "dim-line");
+                    i++;
+                    setTimeout(nextBootLine, CONFIG.bootDelay);
+                } else {
+                    startLogin();
+                }
+            }
+            nextBootLine();
+        }
+
+        function handleInput(rawValue) {
+            if (state === "LOGIN_USER") {
+                printLine(`LOGIN: ${rawValue}`);
+                const userKey = rawValue.trim().toUpperCase();
+                if (!userKey) {
+                    updatePrompt();
+                    return;
+                }
+                pendingUser = userKey;
+                state = "LOGIN_PASS";
+                updatePrompt();
+                return;
+            }
+
+            if (state === "LOGIN_PASS") {
+                printLine(`PASSWORD: ${"*".repeat(rawValue.length)}`);
+                const userRecord = CONFIG.users[pendingUser];
+                if (userRecord && userRecord.password === rawValue) {
+                    currentUser = pendingUser;
+                    state = "SHELL";
+                    printLine(`\n${userRecord.welcomeMessage || "Access granted."}\n`);
+                    updatePrompt();
+                } else {
+                    printLine("ACCESS DENIED: Invalid username or password.\n", "error-line");
+                    state = "LOGIN_USER";
+                    pendingUser = "";
+                    updatePrompt();
+                }
+                return;
+            }
+
+            if (state === "SHELL") {
+                printLine(`${getPathString()}>${rawValue}`);
+                const trimmed = rawValue.trim();
+                if (!trimmed) {
+                    updatePrompt();
+                    return;
+                }
+
+                commandHistory.push(trimmed);
+                historyIndex = commandHistory.length;
+
+                const parts = trimmed.split(/\s+/);
+                const cmdName = parts[0].toUpperCase();
+                const args = parts.slice(1);
+
+                // 1. Check built-in commands (HELP, DIR, CD, TYPE, etc.)
+                if (COMMANDS[cmdName]) {
+                    const context = {
+                        currentUser,
+                        currentPath,
+                        getPathString,
+                        getCurrentDirObject,
+                        clearScreen,
+                        logout: () => {
+                            clearScreen();
+                            startLogin();
+                        }
+                    };
+                    const result = COMMANDS[cmdName].execute(args, context);
+                    if (result && typeof result === "object" && result.error) {
+                        printLine(result.error, "error-line");
+                    } else if (result) {
+                        printLine(result);
+                    }
+                } else {
+                    const dirObj = getCurrentDirObject();
+
+                    // 2. Check if it matches an .EXE file in the current directory
+                    const exeCandidate = cmdName.endsWith(".EXE") ? cmdName : `${cmdName}.EXE`;
+                    if (exeCandidate in dirObj && typeof dirObj[exeCandidate] !== "object") {
+                        launchExecutable(exeCandidate, args);
+                        return;
+                    }
+
+                    // 3. Check if it matches a .VID file (or any file containing a YouTube URL) run directly
+                    const vidCandidate = cmdName in dirObj ? cmdName : `${cmdName}.VID`;
+                    if (vidCandidate in dirObj && typeof dirObj[vidCandidate] === "string") {
+                        const mediaInfo = parseYouTubeMedia(dirObj[vidCandidate]);
+                        if (mediaInfo) {
+                            launchVideoPlayer(mediaInfo, vidCandidate);
+                            return;
+                        }
+                    }
+
+                    printLine("Bad command or file name", "error-line");
+                }
+
+                if (state === "SHELL") {
+                    updatePrompt();
+                }
+            }
+        }
+
+        cmdInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                handleInput(cmdInput.value);
+            } else if (state === "SHELL" && e.key === "ArrowUp") {
+                e.preventDefault();
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    cmdInput.value = commandHistory[historyIndex];
+                }
+            } else if (state === "SHELL" && e.key === "ArrowDown") {
+                e.preventDefault();
+                if (historyIndex < commandHistory.length - 1) {
+                    historyIndex++;
+                    cmdInput.value = commandHistory[historyIndex];
+                } else {
+                    historyIndex = commandHistory.length;
+                    cmdInput.value = "";
+                }
+            }
+        });
+
+        window.onload = bootSequence;
+    </script>
+</body>
+</html>
