@@ -11,7 +11,11 @@
             --text-color: #E2A76F;
             --dim-color: #E2A76F;
             --error-color: #E2A76F;
+            --border-color: #E2A76F;
+            --glow-color: rgba(226, 167, 111, 0.4);
+            --scanline-opacity: 0.25;
             --font-stack: 'Courier New', Courier, monospace;
+            --font-size: 16px;
         }
 
         * {
@@ -24,7 +28,7 @@
             background-color: var(--outer-bg);
             color: var(--text-color);
             font-family: var(--font-stack);
-            font-size: 16px;
+            font-size: var(--font-size);
             line-height: 1.4;
             height: 100vh;
             width: 100vw;
@@ -32,7 +36,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            text-shadow: 0 0 4px rgba(226, 167, 111, 0.4);
+            text-shadow: 0 0 4px var(--glow-color);
         }
 
         /* 4:3 CRT Monitor Frame */
@@ -44,7 +48,7 @@
             background-color: var(--bg-color);
             padding: 24px;
             overflow: hidden;
-            border: 2px solid #E2A76F;
+            border: 2px solid var(--border-color);
             box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 0, 0, 0.9);
         }
 
@@ -55,7 +59,7 @@
             top: 0; left: 0; right: 0; bottom: 0;
             background: linear-gradient(
                 rgba(18, 16, 16, 0) 50%, 
-                rgba(0, 0, 0, 0.25) 50%
+                rgba(0, 0, 0, var(--scanline-opacity)) 50%
             );
             background-size: 100% 4px;
             pointer-events: none;
@@ -92,7 +96,7 @@
 
         .error-line {
             color: var(--error-color);
-            text-shadow: 0 0 4px rgba(226, 167, 111, 0.6);
+            text-shadow: 0 0 4px var(--glow-color);
         }
 
         .dim-line {
@@ -114,11 +118,11 @@
             border: none;
             color: var(--text-color);
             font-family: var(--font-stack);
-            font-size: 16px;
+            font-size: var(--font-size);
             flex: 1;
             outline: none;
             caret-color: var(--text-color);
-            text-shadow: 0 0 4px rgba(226, 167, 111, 0.4);
+            text-shadow: 0 0 4px var(--glow-color);
         }
     </style>
 </head>
@@ -136,6 +140,8 @@
     </div>
 
     <!-- External Configuration & Executable Files -->
+    <script src="config.style.js"></script>
+    <script src="config.startup.js"></script>
     <script src="config.users.js"></script>
     <script src="config.filesystem.js" id="fs-script"></script>
     <script src="config.executables.js"></script>
@@ -144,15 +150,62 @@
         // =========================================================================
         // BASE SETTINGS & EXTERNAL CONFIG MERGE
         // =========================================================================
-        const CONFIG = Object.assign({
-            systemName: "CRYONET v3.2",
-            bootDelay: 250,
-            autoTypeSpeed: 65, // Milliseconds per simulated keystroke
-            storageKey: "cryonet_saved_auth",
-            users: {},
-            fileSystem: {},
-            executables: {}
-        }, window.CONFIG);
+        const incoming = window.CONFIG || {};
+
+        const CONFIG = {
+            storageKey: incoming.storageKey || "cryonet_saved_auth",
+            users: incoming.users || {},
+            fileSystem: incoming.fileSystem || {},
+            executables: incoming.executables || {},
+            style: Object.assign({
+                outerBg: "#050505",
+                bgColor: "#0c0c0c",
+                textColor: "#E2A76F",
+                dimColor: "#E2A76F",
+                errorColor: "#E2A76F",
+                borderColor: "#E2A76F",
+                glowColor: "rgba(226, 167, 111, 0.4)",
+                scanlines: true,
+                fontStack: "'Courier New', Courier, monospace",
+                fontSize: "16px",
+                pageTitle: "CRYONET Terminal SYSTEM"
+            }, incoming.style),
+            startup: Object.assign({
+                systemName: "CRYONET v3.2",
+                bootDelay: 250,
+                autoTypeSpeed: 65,
+                autoRunCommands: [],
+                bootLines: [
+                    "BIOS Date 01/15/94 14:22:51 Ver 1.02",
+                    "CPU: ATOM 86605XC 66MHz",
+                    "Memory Test: 16384K OK\n",
+                    "Initializing Keyboard... OK",
+                    "========================================",
+                    "CRYONET v3.2 - AUTHORIZED ACCESS ONLY",
+                    "========================================"
+                ]
+            }, incoming.startup)
+        };
+
+        // =========================================================================
+        // APPLY CONFIG.STYLE TO CSS VARIABLES
+        // =========================================================================
+        function applyConfigStyle() {
+            const root = document.documentElement.style;
+            const s = CONFIG.style;
+            root.setProperty("--outer-bg", s.outerBg);
+            root.setProperty("--bg-color", s.bgColor);
+            root.setProperty("--text-color", s.textColor);
+            root.setProperty("--dim-color", s.dimColor);
+            root.setProperty("--error-color", s.errorColor);
+            root.setProperty("--border-color", s.borderColor);
+            root.setProperty("--glow-color", s.glowColor);
+            root.setProperty("--scanline-opacity", s.scanlines ? "0.25" : "0");
+            root.setProperty("--font-stack", s.fontStack);
+            root.setProperty("--font-size", s.fontSize);
+            if (s.pageTitle) document.title = s.pageTitle;
+        }
+        applyConfigStyle();
 
         // =========================================================================
         // SAVED SESSION HELPERS (Safe localStorage + cookie fallback)
@@ -213,7 +266,6 @@
                 if (window.CONFIG && window.CONFIG.fileSystem) {
                     CONFIG.fileSystem = window.CONFIG.fileSystem;
 
-                    // Validate that the user's current folder path still exists
                     let checkObj = CONFIG.fileSystem;
                     let validPath = [];
                     for (const folder of currentPath) {
@@ -288,14 +340,16 @@
             appViewport.style.display = "block";
 
             const fallbackHref = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
+            const accent = CONFIG.style.textColor;
+            const bg = CONFIG.style.bgColor;
 
             appViewport.innerHTML = `
-                <div style="border: 1px solid #E2A76F; padding: 12px; height: 100%; display: flex; flex-direction: column; justify-content: space-between; gap: 10px;">
-                    <div style="background: #E2A76F; color: #0c0c0c; padding: 4px 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+                <div style="border: 1px solid ${accent}; padding: 12px; height: 100%; display: flex; flex-direction: column; justify-content: space-between; gap: 10px;">
+                    <div style="background: ${accent}; color: ${bg}; padding: 4px 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
                         <span>CRYONET MEDIA DECODER // ${sourceFileName}</span>
                         <span>${mediaInfo.label}</span>
                     </div>
-                    <div style="flex: 1; border: 1px solid #E2A76F; background: #000; position: relative; overflow: hidden;">
+                    <div style="flex: 1; border: 1px solid ${accent}; background: #000; position: relative; overflow: hidden;">
                         <iframe
                             src="${mediaInfo.embedUrl}"
                             referrerpolicy="strict-origin-when-cross-origin"
@@ -308,10 +362,10 @@
                         <span style="font-size: 13px;">PRESS [ESC] OR CLICK EXIT TO RETURN</span>
                         <div style="display: flex; gap: 8px;">
                             ${rawUrl ? `<a href="${fallbackHref}" target="_blank" rel="noopener noreferrer"
-                               style="background: transparent; color: #E2A76F; border: 1px solid #E2A76F; padding: 4px 10px; font-family: inherit; text-decoration: none; font-size: 14px;">
+                               style="background: transparent; color: ${accent}; border: 1px solid ${accent}; padding: 4px 10px; font-family: inherit; text-decoration: none; font-size: 14px;">
                                 [ EXTERNAL LINK ]
                             </a>` : ""}
-                            <button id="btn-close-video" style="background: #E2A76F; color: #0c0c0c; border: none; padding: 4px 12px; font-family: inherit; font-weight: bold; cursor: pointer;">
+                            <button id="btn-close-video" style="background: ${accent}; color: ${bg}; border: none; padding: 4px 12px; font-family: inherit; font-weight: bold; cursor: pointer;">
                                 [ EXIT PLAYER ]
                             </button>
                         </div>
@@ -451,7 +505,7 @@
             },
             VER: {
                 description: "Displays the OS version.",
-                execute: () => `\n${CONFIG.systemName}\n`
+                execute: () => `\n${CONFIG.startup.systemName}\n`
             },
             WHOAMI: {
                 description: "Displays the current logged-in user.",
@@ -534,6 +588,7 @@
                 user: currentUser,
                 path: getPathString(),
                 fileSystem: CONFIG.fileSystem,
+                style: CONFIG.style,
                 exit: (exitMessage = "") => {
                     appViewport.innerHTML = "";
                     appViewport.style.display = "none";
@@ -567,6 +622,23 @@
             terminalEl.scrollTop = terminalEl.scrollHeight;
         }
 
+        function onSessionAuthenticated(userKey, userRecord) {
+            currentUser = userKey;
+            pendingUser = "";
+            state = "SHELL";
+            printLine(`\n${userRecord.welcomeMessage || "Access granted."}\n`);
+            updatePrompt();
+
+            // Run any startup commands defined in config.startup.autoRunCommands
+            if (Array.isArray(CONFIG.startup.autoRunCommands)) {
+                for (const cmd of CONFIG.startup.autoRunCommands) {
+                    if (state === "SHELL" && typeof cmd === "string" && cmd.trim()) {
+                        handleInput(cmd);
+                    }
+                }
+            }
+        }
+
         function startLogin() {
             state = "LOGIN_USER";
             pendingUser = "";
@@ -590,7 +662,7 @@
                     if (idx < text.length) {
                         cmdInput.value += text[idx];
                         idx++;
-                        setTimeout(step, CONFIG.autoTypeSpeed);
+                        setTimeout(step, CONFIG.startup.autoTypeSpeed);
                     } else {
                         setTimeout(onComplete, 180);
                     }
@@ -607,11 +679,7 @@
 
                 typeText(saved.password, () => {
                     printLine(`PASSWORD: ${"*".repeat(saved.password.length)}`);
-                    currentUser = saved.username;
-                    pendingUser = "";
-                    state = "SHELL";
-                    printLine(`\n${saved.record.welcomeMessage || "Access granted."}\n`);
-                    updatePrompt();
+                    onSessionAuthenticated(saved.username, saved.record);
                 });
             });
         }
@@ -619,22 +687,14 @@
         function bootSequence() {
             inputRow.style.display = "none";
             clearScreen();
-            const bootLines = [
-                "BIOS Date 01/15/94 14:22:51 Ver 1.02",
-                "CPU: ATOM 86605XC 66MHz",
-                "Memory Test: 16384K OK\n",
-                "Initializing Keyboard... OK",
-                "========================================",
-                "CRYONET v3.2 - AUTHORIZED ACCESS ONLY",
-                "========================================"
-            ];
+            const bootLines = CONFIG.startup.bootLines || [];
 
             let i = 0;
             function nextBootLine() {
                 if (i < bootLines.length) {
                     printLine(bootLines[i], "dim-line");
                     i++;
-                    setTimeout(nextBootLine, CONFIG.bootDelay);
+                    setTimeout(nextBootLine, CONFIG.startup.bootDelay);
                 } else {
                     const saved = getSavedCredentials();
                     if (saved) {
@@ -667,11 +727,8 @@
                 printLine(`PASSWORD: ${"*".repeat(rawValue.length)}`);
                 const userRecord = CONFIG.users[pendingUser];
                 if (userRecord && userRecord.password === rawValue) {
-                    currentUser = pendingUser;
-                    saveLoginCredentials(currentUser, rawValue);
-                    state = "SHELL";
-                    printLine(`\n${userRecord.welcomeMessage || "Access granted."}\n`);
-                    updatePrompt();
+                    saveLoginCredentials(pendingUser, rawValue);
+                    onSessionAuthenticated(pendingUser, userRecord);
                 } else {
                     printLine("ACCESS DENIED: Invalid username or password.\n", "error-line");
                     state = "LOGIN_USER";
