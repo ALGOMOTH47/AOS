@@ -140,52 +140,64 @@
     </div>
 
     <!-- External Configuration & Executable Files -->
-    <script src="config.style.js"></script>
-    <script src="config.startup.js"></script>
-    <script src="config.users.js"></script>
-    <script src="config.filesystem.js" id="fs-script"></script>
-    <script src="config.executables.js"></script>
+    <script src="config.style.js" data-config-file="config.style.js"></script>
+    <script src="config.startup.js" data-config-file="config.startup.js"></script>
+    <script src="config.users.js" data-config-file="config.users.js"></script>
+    <script src="config.filesystem.js" data-config-file="config.filesystem.js"></script>
+    <script src="config.executables.js" data-config-file="config.executables.js"></script>
 
     <script>
         // =========================================================================
         // BASE SETTINGS & EXTERNAL CONFIG MERGE
         // =========================================================================
-        const incoming = window.CONFIG || {};
+        const DEFAULT_STYLE = {
+            outerBg: "#050505",
+            bgColor: "#0c0c0c",
+            textColor: "#E2A76F",
+            dimColor: "#E2A76F",
+            errorColor: "#E2A76F",
+            borderColor: "#E2A76F",
+            glowColor: "rgba(226, 167, 111, 0.4)",
+            scanlines: true,
+            fontStack: "'Courier New', Courier, monospace",
+            fontSize: "16px",
+            pageTitle: "CRYONET Terminal SYSTEM"
+        };
+
+        const DEFAULT_STARTUP = {
+            systemName: "CRYONET v3.2",
+            bootDelay: 250,
+            autoTypeSpeed: 65,
+            autoRunCommands: [],
+            bootLines: [
+                "BIOS Date 01/15/94 14:22:51 Ver 1.02",
+                "CPU: ATOM 86605XC 66MHz",
+                "Memory Test: 16384K OK\n",
+                "Initializing Keyboard... OK",
+                "========================================",
+                "CRYONET v3.2 - AUTHORIZED ACCESS ONLY",
+                "========================================"
+            ]
+        };
 
         const CONFIG = {
-            storageKey: incoming.storageKey || "cryonet_saved_auth",
-            users: incoming.users || {},
-            fileSystem: incoming.fileSystem || {},
-            executables: incoming.executables || {},
-            style: Object.assign({
-                outerBg: "#050505",
-                bgColor: "#0c0c0c",
-                textColor: "#E2A76F",
-                dimColor: "#E2A76F",
-                errorColor: "#E2A76F",
-                borderColor: "#E2A76F",
-                glowColor: "rgba(226, 167, 111, 0.4)",
-                scanlines: true,
-                fontStack: "'Courier New', Courier, monospace",
-                fontSize: "16px",
-                pageTitle: "CRYONET Terminal SYSTEM"
-            }, incoming.style),
-            startup: Object.assign({
-                systemName: "CRYONET v3.2",
-                bootDelay: 250,
-                autoTypeSpeed: 65,
-                autoRunCommands: [],
-                bootLines: [
-                    "BIOS Date 01/15/94 14:22:51 Ver 1.02",
-                    "CPU: ATOM 86605XC 66MHz",
-                    "Memory Test: 16384K OK\n",
-                    "Initializing Keyboard... OK",
-                    "========================================",
-                    "CRYONET v3.2 - AUTHORIZED ACCESS ONLY",
-                    "========================================"
-                ]
-            }, incoming.startup)
+            storageKey: "cryonet_saved_auth",
+            users: {},
+            fileSystem: {},
+            executables: {},
+            style: Object.assign({}, DEFAULT_STYLE),
+            startup: Object.assign({}, DEFAULT_STARTUP)
         };
+
+        function syncConfigFromWindow() {
+            const incoming = window.CONFIG || {};
+            if (incoming.storageKey) CONFIG.storageKey = incoming.storageKey;
+            CONFIG.users = incoming.users || {};
+            CONFIG.fileSystem = incoming.fileSystem || {};
+            CONFIG.executables = incoming.executables || {};
+            CONFIG.style = Object.assign({}, DEFAULT_STYLE, incoming.style);
+            CONFIG.startup = Object.assign({}, DEFAULT_STARTUP, incoming.startup);
+        }
 
         // =========================================================================
         // APPLY CONFIG.STYLE TO CSS VARIABLES
@@ -205,6 +217,8 @@
             root.setProperty("--font-size", s.fontSize);
             if (s.pageTitle) document.title = s.pageTitle;
         }
+
+        syncConfigFromWindow();
         applyConfigStyle();
 
         // =========================================================================
@@ -249,48 +263,75 @@
         }
 
         // =========================================================================
-        // DYNAMIC FILESYSTEM RELOADER
+        // DYNAMIC FULL-CONFIG RELOADER
         // =========================================================================
-        function reloadFileSystem() {
+        const CONFIG_FILES = [
+            "config.style.js",
+            "config.startup.js",
+            "config.users.js",
+            "config.filesystem.js",
+            "config.executables.js"
+        ];
+
+        function loadSingleConfigScript(fileName) {
+            return new Promise((resolve) => {
+                const oldScript = document.querySelector(`script[data-config-file="${fileName}"]`);
+                if (oldScript) oldScript.remove();
+
+                const script = document.createElement("script");
+                script.setAttribute("data-config-file", fileName);
+                script.src = `${fileName}?v=${Date.now()}`;
+
+                script.onload = () => resolve({ fileName, ok: true });
+                script.onerror = () => resolve({ fileName, ok: false });
+
+                document.body.appendChild(script);
+            });
+        }
+
+        async function reloadAllConfigs() {
             inputRow.style.display = "none";
-            printLine("Re-indexing CONFIG.FILESYSTEM...", "dim-line");
+            printLine("Reloading system configuration modules...", "dim-line");
 
-            const oldScript = document.getElementById("fs-script");
-            if (oldScript) oldScript.remove();
+            // Reset window.CONFIG so removed keys don't linger
+            window.CONFIG = {};
 
-            const newScript = document.createElement("script");
-            newScript.id = "fs-script";
-            newScript.src = `config.filesystem.js?v=${Date.now()}`;
-
-            newScript.onload = () => {
-                if (window.CONFIG && window.CONFIG.fileSystem) {
-                    CONFIG.fileSystem = window.CONFIG.fileSystem;
-
-                    let checkObj = CONFIG.fileSystem;
-                    let validPath = [];
-                    for (const folder of currentPath) {
-                        if (checkObj && typeof checkObj[folder] === "object" && checkObj[folder] !== null) {
-                            validPath.push(folder);
-                            checkObj = checkObj[folder];
-                        } else {
-                            printLine(`Directory ${folder} no longer exists. Resetting to C:\\`, "dim-line");
-                            break;
-                        }
-                    }
-                    currentPath = validPath;
-                    printLine("File system reloaded successfully.\n");
+            for (const fileName of CONFIG_FILES) {
+                const res = await loadSingleConfigScript(fileName);
+                if (res.ok) {
+                    printLine(`  [OK]   ${fileName}`, "dim-line");
                 } else {
-                    printLine("ERROR: config.filesystem.js loaded but window.CONFIG.fileSystem is missing.\n", "error-line");
+                    printLine(`  [WARN] ${fileName} (not found or skipped)`, "dim-line");
                 }
-                updatePrompt();
-            };
+            }
 
-            newScript.onerror = () => {
-                printLine("ERROR: Failed to fetch config.filesystem.js.\n", "error-line");
-                updatePrompt();
-            };
+            syncConfigFromWindow();
+            applyConfigStyle();
 
-            document.body.appendChild(newScript);
+            // Validate current user still exists and password wasn't revoked
+            if (currentUser && !CONFIG.users[currentUser]) {
+                clearSavedCredentials();
+                printLine(`\nUser "${currentUser}" no longer exists in config.users.js. Logging out...\n`, "error-line");
+                startLogin();
+                return;
+            }
+
+            // Validate current folder path still exists in updated fileSystem
+            let checkObj = CONFIG.fileSystem;
+            let validPath = [];
+            for (const folder of currentPath) {
+                if (checkObj && typeof checkObj[folder] === "object" && checkObj[folder] !== null) {
+                    validPath.push(folder);
+                    checkObj = checkObj[folder];
+                } else {
+                    printLine(`Directory ${folder} no longer exists. Resetting to C:\\`, "dim-line");
+                    break;
+                }
+            }
+            currentPath = validPath;
+
+            printLine("All configurations reloaded.\n");
+            updatePrompt();
         }
 
         // =========================================================================
@@ -493,9 +534,9 @@
                 }
             },
             RELOAD: {
-                description: "Re-reads config.filesystem.js and refreshes files.",
+                description: "Reloads all external config files (style, startup, users, fs, exe).",
                 execute: () => {
-                    reloadFileSystem();
+                    reloadAllConfigs();
                     return { asyncHandled: true };
                 }
             },
@@ -629,7 +670,6 @@
             printLine(`\n${userRecord.welcomeMessage || "Access granted."}\n`);
             updatePrompt();
 
-            // Run any startup commands defined in config.startup.autoRunCommands
             if (Array.isArray(CONFIG.startup.autoRunCommands)) {
                 for (const cmd of CONFIG.startup.autoRunCommands) {
                     if (state === "SHELL" && typeof cmd === "string" && cmd.trim()) {
