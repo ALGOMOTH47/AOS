@@ -137,7 +137,7 @@
 
     <!-- External Configuration & Executable Files -->
     <script src="config.users.js"></script>
-    <script src="config.filesystem.js"></script>
+    <script src="config.filesystem.js" id="fs-script"></script>
     <script src="config.executables.js"></script>
 
     <script>
@@ -162,7 +162,6 @@
             try {
                 localStorage.setItem(CONFIG.storageKey, payload);
             } catch (e) {
-                // Fallback if storage is restricted
                 document.cookie = `${CONFIG.storageKey}=${encodeURIComponent(payload)}; path=/; max-age=2592000; SameSite=Lax`;
             }
         }
@@ -194,6 +193,52 @@
                 localStorage.removeItem(CONFIG.storageKey);
             } catch (e) {}
             document.cookie = `${CONFIG.storageKey}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+        }
+
+        // =========================================================================
+        // DYNAMIC FILESYSTEM RELOADER
+        // =========================================================================
+        function reloadFileSystem() {
+            inputRow.style.display = "none";
+            printLine("Re-indexing CONFIG.FILESYSTEM...", "dim-line");
+
+            const oldScript = document.getElementById("fs-script");
+            if (oldScript) oldScript.remove();
+
+            const newScript = document.createElement("script");
+            newScript.id = "fs-script";
+            newScript.src = `config.filesystem.js?v=${Date.now()}`;
+
+            newScript.onload = () => {
+                if (window.CONFIG && window.CONFIG.fileSystem) {
+                    CONFIG.fileSystem = window.CONFIG.fileSystem;
+
+                    // Validate that the user's current folder path still exists
+                    let checkObj = CONFIG.fileSystem;
+                    let validPath = [];
+                    for (const folder of currentPath) {
+                        if (checkObj && typeof checkObj[folder] === "object" && checkObj[folder] !== null) {
+                            validPath.push(folder);
+                            checkObj = checkObj[folder];
+                        } else {
+                            printLine(`Directory ${folder} no longer exists. Resetting to C:\\`, "dim-line");
+                            break;
+                        }
+                    }
+                    currentPath = validPath;
+                    printLine("File system reloaded successfully.\n");
+                } else {
+                    printLine("ERROR: config.filesystem.js loaded but window.CONFIG.fileSystem is missing.\n", "error-line");
+                }
+                updatePrompt();
+            };
+
+            newScript.onerror = () => {
+                printLine("ERROR: Failed to fetch config.filesystem.js.\n", "error-line");
+                updatePrompt();
+            };
+
+            document.body.appendChild(newScript);
         }
 
         // =========================================================================
@@ -393,6 +438,13 @@
                     return fileContent;
                 }
             },
+            RELOAD: {
+                description: "Re-reads config.filesystem.js and refreshes files.",
+                execute: () => {
+                    reloadFileSystem();
+                    return { asyncHandled: true };
+                }
+            },
             ECHO: {
                 description: "Displays messages.",
                 execute: (args) => args.join(" ")
@@ -523,7 +575,6 @@
             updatePrompt();
         }
 
-        // Simulates typing out saved username & password keystrokes automatically
         function runAutoLogin(saved) {
             state = "AUTO_LOGIN";
             cmdInput.readOnly = true;
@@ -547,7 +598,6 @@
                 setTimeout(step, 200);
             }
 
-            // 1. Type the username
             typeText(saved.username, () => {
                 printLine(`LOGIN: ${saved.username}`);
                 pendingUser = saved.username;
@@ -555,7 +605,6 @@
                 cmdInput.type = "password";
                 promptLabel.textContent = "PASSWORD: ";
 
-                // 2. Type the password
                 typeText(saved.password, () => {
                     printLine(`PASSWORD: ${"*".repeat(saved.password.length)}`);
                     currentUser = saved.username;
@@ -662,6 +711,9 @@
                         }
                     };
                     const result = COMMANDS[cmdName].execute(args, context);
+                    if (result && typeof result === "object" && result.asyncHandled) {
+                        return;
+                    }
                     if (result && typeof result === "object" && result.error) {
                         printLine(result.error, "error-line");
                     } else if (result) {
