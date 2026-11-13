@@ -2,7 +2,7 @@ window.CONFIG = window.CONFIG || {};
 
 window.CONFIG.users = {
     "ADMIN": {
-        password: "123",
+        password: "ADMIN",
         welcomeMessage: "Welcome, System Administrator. Full access granted."
     },
     "GUEST": {
@@ -11,6 +11,6 @@ window.CONFIG.users = {
     },
     "DEV01": {
         password: "BUILD",
-        welcomeMessage: "Developer terminal initialized. Compiler ready."
+        welcomeMessage: "Developer terminal initialized. Compiler ready. Welcome AOS Deveolper"
     }
 };
