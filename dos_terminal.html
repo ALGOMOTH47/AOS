@@ -94,6 +94,18 @@
             margin-bottom: 2px;
         }
 
+        .output-line a {
+            color: var(--text-color);
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        .output-line a:hover {
+            background-color: var(--text-color);
+            color: var(--bg-color);
+            text-shadow: none;
+        }
+
         .center-line {
             text-align: center;
             width: 100%;
@@ -133,7 +145,7 @@
 </head>
 <body>
     <div id="crt-frame">
-        <div id="terminal" onclick="if(state !== 'APP') document.getElementById('cmd-input').focus()">
+        <div id="terminal" onclick="if(state !== 'APP' && window.getSelection().toString() === '') document.getElementById('cmd-input').focus()">
             <div id="output"></div>
             <div class="input-line" id="input-row" style="display: none;">
                 <span class="prompt-label" id="prompt-label"></span>
@@ -259,6 +271,93 @@
                 return entry.content;
             }
             return "";
+        }
+
+        // =========================================================================
+        // [LINK] FILE & INLINE LINK PARSERS
+        // =========================================================================
+        function normalizeUrl(rawTarget) {
+            return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawTarget)
+                ? rawTarget
+                : `https://${rawTarget}`;
+        }
+
+        // Standalone [LINK] file (entire file is just "[LINK]...")
+        function parseStandaloneLinkFile(text) {
+            if (typeof text !== "string") return null;
+            const trimmed = text.trim();
+            const match = trimmed.match(/^\[LINK\](\S+)$/i);
+            if (!match) return null;
+
+            const rawTarget = match[1].replace(/[.,;:!?)]+$/, "");
+            if (!rawTarget) return null;
+
+            return { rawTarget, url: normalizeUrl(rawTarget) };
+        }
+
+        function openExternalLink(linkInfo, fileName) {
+            const div = document.createElement("div");
+            div.className = "output-line";
+            div.appendChild(document.createTextNode(`Opening external link (${fileName}) -> `));
+
+            const anchor = document.createElement("a");
+            anchor.href = linkInfo.url;
+            anchor.target = "_blank";
+            anchor.rel = "noopener noreferrer";
+            anchor.textContent = linkInfo.url;
+
+            div.appendChild(anchor);
+            outputEl.appendChild(div);
+            terminalEl.scrollTop = terminalEl.scrollHeight;
+
+            window.open(linkInfo.url, "_blank", "noopener,noreferrer");
+        }
+
+        // Renders text that contains inline [LINK]url tags as clickable <a> elements
+        function printRichText(text, className = "") {
+            if (text === "" || text === null || text === undefined) return;
+            const div = document.createElement("div");
+            div.className = `output-line ${className}`.trim();
+
+            const linkRegex = /\[LINK\]([^\s<>"']+)/gi;
+            let lastIndex = 0;
+            let match;
+
+            while ((match = linkRegex.exec(text)) !== null) {
+                if (match.index > lastIndex) {
+                    div.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+                }
+
+                // Separate any trailing sentence punctuation (like "." or ",") from the URL
+                const fullToken = match[1];
+                const cleanTarget = fullToken.replace(/[.,;:!?)]+$/, "");
+                const trailingPunct = fullToken.slice(cleanTarget.length);
+
+                if (cleanTarget) {
+                    const anchor = document.createElement("a");
+                    anchor.href = normalizeUrl(cleanTarget);
+                    anchor.target = "_blank";
+                    anchor.rel = "noopener noreferrer";
+                    anchor.textContent = cleanTarget;
+                    div.appendChild(anchor);
+                } else {
+                    div.appendChild(document.createTextNode(match[0]));
+                }
+
+                if (trailingPunct) {
+                    div.appendChild(document.createTextNode(trailingPunct));
+                }
+
+                lastIndex = linkRegex.lastIndex;
+            }
+
+            if (lastIndex < text.length) {
+                div.appendChild(document.createTextNode(text.slice(lastIndex)));
+            }
+
+            outputEl.appendChild(div);
+            terminalEl.scrollTop = terminalEl.scrollHeight;
+            return div;
         }
 
         // =========================================================================
@@ -476,6 +575,44 @@
         }
 
         // =========================================================================
+        // UNIFIED FILE OPENER (Direct filename or TYPE command)
+        // =========================================================================
+        function openFileEntry(fileName, args = []) {
+            const dirObj = getCurrentDirObject();
+            const entry = dirObj[fileName];
+            const reqLevel = getEntryRequiredLevel(entry);
+
+            if (!hasClearance(reqLevel)) {
+                printLine(`ACCESS DENIED: ${fileName} requires Clearance Level ${reqLevel} (Current: Level ${currentUserLevel}).`, "error-line");
+                return;
+            }
+
+            if (fileName.endsWith(".EXE")) {
+                launchExecutable(fileName, args, reqLevel);
+                return;
+            }
+
+            const content = getFileTextContent(entry);
+
+            // 1. Standalone [LINK] file -> open immediately in new tab
+            const linkInfo = parseStandaloneLinkFile(content);
+            if (linkInfo) {
+                openExternalLink(linkInfo, fileName);
+                return;
+            }
+
+            // 2. YouTube video/playlist -> open embedded CRT media player
+            const mediaInfo = parseYouTubeMedia(content);
+            if (mediaInfo) {
+                launchVideoPlayer(mediaInfo, fileName, content);
+                return;
+            }
+
+            // 3. Text file (supports inline [LINK]url tags as clickable links)
+            printRichText(content);
+        }
+
+        // =========================================================================
         // CUSTOM COMMANDS (with minLevel: 1 | 2 | 3 support)
         // =========================================================================
         const COMMANDS = {
@@ -485,8 +622,7 @@
                 execute: (args, ctx) => {
                     let lines = [
                         `Available commands (Clearance Level ${ctx.userLevel}):`,
-                        "  <FILE.EXE> - Executes a program in the current directory.",
-                        "  <FILE.VID> - Plays a YouTube video or playlist file."
+                        "  <FILENAME> - Opens a text file, link, video, or executable directly."
                     ];
                     for (const [cmd, info] of Object.entries(COMMANDS)) {
                         if (hasClearance(info.minLevel)) {
@@ -521,8 +657,9 @@
                             dirCount++;
                         } else {
                             const content = getFileTextContent(entry);
-                            const size = String(content.length).padStart(8, " ");
-                            out.push(`  ${name.padEnd(12)} ${size} bytes${lockTag}`);
+                            const isStandaloneLink = Boolean(parseStandaloneLinkFile(content));
+                            const meta = isStandaloneLink ? "   <LINK>" : `${String(content.length).padStart(8, " ")} bytes`;
+                            out.push(`  ${name.padEnd(12)} ${meta}${lockTag}`);
                             fileCount++;
                         }
                     }
@@ -565,7 +702,7 @@
             },
             TYPE: {
                 minLevel: 1,
-                description: "Displays a text file or plays an embedded video/playlist.",
+                description: "Displays a text file, opens a link, or plays a video.",
                 execute: (args, ctx) => {
                     if (!args[0]) return { error: "Required parameter missing" };
                     const fileName = args[0].toUpperCase();
@@ -581,24 +718,12 @@
                         return { error: `Access denied - ${args[0]} is a directory` };
                     }
 
-                    const reqLevel = getEntryRequiredLevel(entry);
-                    if (!hasClearance(reqLevel)) {
-                        return { error: `ACCESS DENIED: ${fileName} requires Clearance Level ${reqLevel} (Current: Level ${ctx.userLevel}).` };
-                    }
-
                     if (fileName.endsWith(".EXE")) {
                         return { error: `Cannot display binary executable - Run ${fileName} directly.` };
                     }
 
-                    const fileContent = getFileTextContent(entry);
-                    const mediaInfo = parseYouTubeMedia(fileContent);
-
-                    if (mediaInfo) {
-                        launchVideoPlayer(mediaInfo, fileName, fileContent);
-                        return "";
-                    }
-
-                    return fileContent;
+                    openFileEntry(fileName, args.slice(1));
+                    return "";
                 }
             },
             RELOAD: {
@@ -876,7 +1001,6 @@
                         if (entry.className) classes.push(entry.className);
                     } else if (typeof entry === "string") {
                         text = entry;
-                        // Parse leading tags in any order: [CLEAR], [CENTER], [PROGRESS][N]
                         let tagFound = true;
                         while (tagFound) {
                             tagFound = false;
@@ -1000,35 +1124,28 @@
                     } else if (result) {
                         printLine(result);
                     }
-                } else {
+                } else if (!cmdName.startsWith("_")) {
                     const dirObj = getCurrentDirObject();
 
-                    // Check .EXE file
-                    const exeCandidate = cmdName.endsWith(".EXE") ? cmdName : `${cmdName}.EXE`;
-                    if (exeCandidate in dirObj && !isDirectoryEntry(dirObj[exeCandidate])) {
-                        const fileReqLevel = getEntryRequiredLevel(dirObj[exeCandidate]);
-                        launchExecutable(exeCandidate, args, fileReqLevel);
+                    // 1. Exact file match in current directory (.TXT, .EXE, .VID, .LNK, etc.)
+                    if (cmdName in dirObj && !isDirectoryEntry(dirObj[cmdName])) {
+                        openFileEntry(cmdName, args);
+                        if (state === "SHELL") updatePrompt();
                         return;
                     }
 
-                    // Check .VID file
-                    const vidCandidate = cmdName in dirObj ? cmdName : `${cmdName}.VID`;
-                    if (vidCandidate in dirObj && !isDirectoryEntry(dirObj[vidCandidate])) {
-                        const entry = dirObj[vidCandidate];
-                        const reqLevel = getEntryRequiredLevel(entry);
-                        if (!hasClearance(reqLevel)) {
-                            printLine(`ACCESS DENIED: ${vidCandidate} requires Clearance Level ${reqLevel} (Current: Level ${currentUserLevel}).`, "error-line");
-                            updatePrompt();
-                            return;
-                        }
-                        const content = getFileTextContent(entry);
-                        const mediaInfo = parseYouTubeMedia(content);
-                        if (mediaInfo) {
-                            launchVideoPlayer(mediaInfo, vidCandidate, content);
+                    // 2. Shorthand matches without extension (.EXE, .VID, .LNK)
+                    for (const ext of [".EXE", ".VID", ".LNK"]) {
+                        const candidate = `${cmdName}${ext}`;
+                        if (candidate in dirObj && !isDirectoryEntry(dirObj[candidate])) {
+                            openFileEntry(candidate, args);
+                            if (state === "SHELL") updatePrompt();
                             return;
                         }
                     }
 
+                    printLine("Bad command or file name", "error-line");
+                } else {
                     printLine("Bad command or file name", "error-line");
                 }
 
