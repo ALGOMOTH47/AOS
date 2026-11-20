@@ -222,6 +222,41 @@
         applyConfigStyle();
 
         // =========================================================================
+        // CLEARANCE LEVEL HELPERS (Levels 1 - 3)
+        // =========================================================================
+        function getUserLevel(username) {
+            const rec = CONFIG.users[username];
+            if (!rec || typeof rec.level !== "number") return 1;
+            return Math.max(1, Math.min(3, Math.floor(rec.level)));
+        }
+
+        function hasClearance(requiredLevel) {
+            const req = typeof requiredLevel === "number" ? requiredLevel : 1;
+            return currentUserLevel >= req;
+        }
+
+        // Distinguishes a folder object from a restricted file object ({ content: "...", level: 2 })
+        function isDirectoryEntry(entry) {
+            return typeof entry === "object" && entry !== null && !("content" in entry);
+        }
+
+        function getEntryRequiredLevel(entry) {
+            if (typeof entry === "object" && entry !== null) {
+                if (typeof entry._level === "number") return entry._level;
+                if (typeof entry.level === "number") return entry.level;
+            }
+            return 1;
+        }
+
+        function getFileTextContent(entry) {
+            if (typeof entry === "string") return entry;
+            if (typeof entry === "object" && entry !== null && typeof entry.content === "string") {
+                return entry.content;
+            }
+            return "";
+        }
+
+        // =========================================================================
         // SAVED SESSION HELPERS (Safe localStorage + cookie fallback)
         // =========================================================================
         function saveLoginCredentials(username, password) {
@@ -293,7 +328,6 @@
             inputRow.style.display = "none";
             printLine("Reloading system configuration modules...", "dim-line");
 
-            // Reset window.CONFIG so removed keys don't linger
             window.CONFIG = {};
 
             for (const fileName of CONFIG_FILES) {
@@ -308,7 +342,6 @@
             syncConfigFromWindow();
             applyConfigStyle();
 
-            // Validate current user still exists and password wasn't revoked
             if (currentUser && !CONFIG.users[currentUser]) {
                 clearSavedCredentials();
                 printLine(`\nUser "${currentUser}" no longer exists in config.users.js. Logging out...\n`, "error-line");
@@ -316,21 +349,26 @@
                 return;
             }
 
-            // Validate current folder path still exists in updated fileSystem
+            if (currentUser) {
+                currentUserLevel = getUserLevel(currentUser);
+            }
+
+            // Re-validate current folder path & clearance level
             let checkObj = CONFIG.fileSystem;
             let validPath = [];
             for (const folder of currentPath) {
-                if (checkObj && typeof checkObj[folder] === "object" && checkObj[folder] !== null) {
+                const nextObj = checkObj ? checkObj[folder] : null;
+                if (isDirectoryEntry(nextObj) && hasClearance(getEntryRequiredLevel(nextObj))) {
                     validPath.push(folder);
-                    checkObj = checkObj[folder];
+                    checkObj = nextObj;
                 } else {
-                    printLine(`Directory ${folder} no longer exists. Resetting to C:\\`, "dim-line");
+                    printLine(`Access revoked or directory ${folder} missing. Resetting to C:\\`, "dim-line");
                     break;
                 }
             }
             currentPath = validPath;
 
-            printLine("All configurations reloaded.\n");
+            printLine(`All configurations reloaded. Active Clearance: LEVEL ${currentUserLevel}.\n`);
             updatePrompt();
         }
 
@@ -433,28 +471,32 @@
         }
 
         // =========================================================================
-        // CUSTOM COMMANDS
+        // CUSTOM COMMANDS (with minLevel: 1 | 2 | 3 support)
         // =========================================================================
         const COMMANDS = {
             HELP: {
-                description: "Displays a list of available commands.",
+                minLevel: 1,
+                description: "Displays commands available at your clearance level.",
                 execute: (args, ctx) => {
                     let lines = [
-                        "Available commands:",
+                        `Available commands (Clearance Level ${ctx.userLevel}):`,
                         "  <FILE.EXE> - Executes a program in the current directory.",
                         "  <FILE.VID> - Plays a YouTube video or playlist file."
                     ];
                     for (const [cmd, info] of Object.entries(COMMANDS)) {
-                        lines.push(`  ${cmd.padEnd(10)} - ${info.description}`);
+                        if (hasClearance(info.minLevel)) {
+                            lines.push(`  ${cmd.padEnd(10)} - ${info.description}`);
+                        }
                     }
                     return lines.join("\n");
                 }
             },
             DIR: {
-                description: "Displays a list of files and subdirectories in a directory.",
+                minLevel: 1,
+                description: "Displays files and subdirectories in a directory.",
                 execute: (args, ctx) => {
                     const dirObj = ctx.getCurrentDirObject();
-                    const entries = Object.entries(dirObj);
+                    const entries = Object.entries(dirObj).filter(([key]) => !key.startsWith("_"));
                     let out = [` Directory of ${ctx.getPathString()}\n`];
                     
                     if (ctx.currentPath.length > 0) {
@@ -465,13 +507,17 @@
                     let fileCount = 0;
                     let dirCount = 0;
 
-                    for (const [name, content] of entries) {
-                        if (typeof content === "object" && content !== null) {
-                            out.push(`  ${name.padEnd(12)} <DIR>`);
+                    for (const [name, entry] of entries) {
+                        const reqLevel = getEntryRequiredLevel(entry);
+                        const lockTag = reqLevel > 1 ? ` [LVL ${reqLevel}${hasClearance(reqLevel) ? "" : " - LOCKED"}]` : "";
+
+                        if (isDirectoryEntry(entry)) {
+                            out.push(`  ${name.padEnd(12)} <DIR>${lockTag}`);
                             dirCount++;
                         } else {
+                            const content = getFileTextContent(entry);
                             const size = String(content.length).padStart(8, " ");
-                            out.push(`  ${name.padEnd(12)} ${size} bytes`);
+                            out.push(`  ${name.padEnd(12)} ${size} bytes${lockTag}`);
                             fileCount++;
                         }
                     }
@@ -482,6 +528,7 @@
                 }
             },
             CD: {
+                minLevel: 1,
                 description: "Displays the name of or changes the current directory.",
                 execute: (args, ctx) => {
                     if (!args[0]) return ctx.getPathString();
@@ -498,7 +545,13 @@
                     if (target === ".") return "";
 
                     const dirObj = ctx.getCurrentDirObject();
-                    if (dirObj[target] && typeof dirObj[target] === "object") {
+                    const entry = dirObj[target];
+
+                    if (isDirectoryEntry(entry)) {
+                        const reqLevel = getEntryRequiredLevel(entry);
+                        if (!hasClearance(reqLevel)) {
+                            return { error: `ACCESS DENIED: ${target} requires Clearance Level ${reqLevel} (Current: Level ${ctx.userLevel}).` };
+                        }
                         ctx.currentPath.push(target);
                         return "";
                     }
@@ -506,23 +559,33 @@
                 }
             },
             TYPE: {
+                minLevel: 1,
                 description: "Displays a text file or plays an embedded video/playlist.",
                 execute: (args, ctx) => {
                     if (!args[0]) return { error: "Required parameter missing" };
                     const fileName = args[0].toUpperCase();
-                    const dirObj = ctx.getCurrentDirObject();
+                    if (fileName.startsWith("_")) return { error: `File not found - ${args[0]}` };
 
+                    const dirObj = ctx.getCurrentDirObject();
                     if (!(fileName in dirObj)) {
                         return { error: `File not found - ${args[0]}` };
                     }
-                    if (typeof dirObj[fileName] === "object") {
+
+                    const entry = dirObj[fileName];
+                    if (isDirectoryEntry(entry)) {
                         return { error: `Access denied - ${args[0]} is a directory` };
                     }
+
+                    const reqLevel = getEntryRequiredLevel(entry);
+                    if (!hasClearance(reqLevel)) {
+                        return { error: `ACCESS DENIED: ${fileName} requires Clearance Level ${reqLevel} (Current: Level ${ctx.userLevel}).` };
+                    }
+
                     if (fileName.endsWith(".EXE")) {
                         return { error: `Cannot display binary executable - Run ${fileName} directly.` };
                     }
 
-                    const fileContent = dirObj[fileName];
+                    const fileContent = getFileTextContent(entry);
                     const mediaInfo = parseYouTubeMedia(fileContent);
 
                     if (mediaInfo) {
@@ -534,25 +597,30 @@
                 }
             },
             RELOAD: {
-                description: "Reloads all external config files (style, startup, users, fs, exe).",
+                minLevel: 3,
+                description: "[LVL 3] Reloads all external configuration files.",
                 execute: () => {
                     reloadAllConfigs();
                     return { asyncHandled: true };
                 }
             },
             ECHO: {
+                minLevel: 1,
                 description: "Displays messages.",
                 execute: (args) => args.join(" ")
             },
             VER: {
+                minLevel: 1,
                 description: "Displays the OS version.",
                 execute: () => `\n${CONFIG.startup.systemName}\n`
             },
             WHOAMI: {
-                description: "Displays the current logged-in user.",
-                execute: (args, ctx) => `Current user: ${ctx.currentUser}`
+                minLevel: 1,
+                description: "Displays the current user and clearance level.",
+                execute: (args, ctx) => `Current user: ${ctx.currentUser} [CLEARANCE LEVEL ${ctx.userLevel}]`
             },
             CLS: {
+                minLevel: 1,
                 description: "Clears the screen.",
                 execute: (args, ctx) => {
                     ctx.clearScreen();
@@ -560,6 +628,7 @@
                 }
             },
             LOGOUT: {
+                minLevel: 1,
                 description: "Clears saved login and logs out.",
                 execute: (args, ctx) => {
                     ctx.logout();
@@ -581,6 +650,7 @@
         let state = "BOOT"; // BOOT | AUTO_LOGIN | LOGIN_USER | LOGIN_PASS | SHELL | APP
         let pendingUser = "";
         let currentUser = null;
+        let currentUserLevel = 1;
         let currentPath = [];
         let commandHistory = [];
         let historyIndex = -1;
@@ -610,8 +680,25 @@
             return obj;
         }
 
-        function launchExecutable(exeName, args) {
-            const handler = CONFIG.executables[exeName];
+        function launchExecutable(exeName, args, fileReqLevel = 1) {
+            const exeDef = CONFIG.executables[exeName];
+            let handler = null;
+            let exeMinLevel = fileReqLevel;
+
+            if (typeof exeDef === "function") {
+                handler = exeDef;
+            } else if (typeof exeDef === "object" && exeDef !== null && typeof exeDef.run === "function") {
+                handler = exeDef.run;
+                if (typeof exeDef.level === "number") {
+                    exeMinLevel = Math.max(exeMinLevel, exeDef.level);
+                }
+            }
+
+            if (!hasClearance(exeMinLevel)) {
+                printLine(`ACCESS DENIED: ${exeName} requires Clearance Level ${exeMinLevel} (Current: Level ${currentUserLevel}).`, "error-line");
+                return;
+            }
+
             if (typeof handler !== "function") {
                 printLine(`PROGRAM ERROR: Missing binary handler for ${exeName} in config.executables.js`, "error-line");
                 return;
@@ -627,6 +714,7 @@
                 container: appViewport,
                 args: args,
                 user: currentUser,
+                userLevel: currentUserLevel,
                 path: getPathString(),
                 fileSystem: CONFIG.fileSystem,
                 style: CONFIG.style,
@@ -665,9 +753,11 @@
 
         function onSessionAuthenticated(userKey, userRecord) {
             currentUser = userKey;
+            currentUserLevel = getUserLevel(userKey);
             pendingUser = "";
             state = "SHELL";
-            printLine(`\n${userRecord.welcomeMessage || "Access granted."}\n`);
+            printLine(`\n[CLEARANCE LEVEL ${currentUserLevel} VERIFIED]`);
+            printLine(`${userRecord.welcomeMessage || "Access granted."}\n`);
             updatePrompt();
 
             if (Array.isArray(CONFIG.startup.autoRunCommands)) {
@@ -683,6 +773,7 @@
             state = "LOGIN_USER";
             pendingUser = "";
             currentUser = null;
+            currentUserLevel = 1;
             currentPath = [];
             updatePrompt();
         }
@@ -794,8 +885,16 @@
                 const args = parts.slice(1);
 
                 if (COMMANDS[cmdName]) {
+                    const cmdDef = COMMANDS[cmdName];
+                    if (!hasClearance(cmdDef.minLevel)) {
+                        printLine(`ACCESS DENIED: ${cmdName} requires Clearance Level ${cmdDef.minLevel} (Current: Level ${currentUserLevel}).`, "error-line");
+                        updatePrompt();
+                        return;
+                    }
+
                     const context = {
                         currentUser,
+                        userLevel: currentUserLevel,
                         currentPath,
                         getPathString,
                         getCurrentDirObject,
@@ -807,7 +906,7 @@
                             startLogin();
                         }
                     };
-                    const result = COMMANDS[cmdName].execute(args, context);
+                    const result = cmdDef.execute(args, context);
                     if (result && typeof result === "object" && result.asyncHandled) {
                         return;
                     }
@@ -819,17 +918,28 @@
                 } else {
                     const dirObj = getCurrentDirObject();
 
+                    // Check .EXE file
                     const exeCandidate = cmdName.endsWith(".EXE") ? cmdName : `${cmdName}.EXE`;
-                    if (exeCandidate in dirObj && typeof dirObj[exeCandidate] !== "object") {
-                        launchExecutable(exeCandidate, args);
+                    if (exeCandidate in dirObj && !isDirectoryEntry(dirObj[exeCandidate])) {
+                        const fileReqLevel = getEntryRequiredLevel(dirObj[exeCandidate]);
+                        launchExecutable(exeCandidate, args, fileReqLevel);
                         return;
                     }
 
+                    // Check .VID file
                     const vidCandidate = cmdName in dirObj ? cmdName : `${cmdName}.VID`;
-                    if (vidCandidate in dirObj && typeof dirObj[vidCandidate] === "string") {
-                        const mediaInfo = parseYouTubeMedia(dirObj[vidCandidate]);
+                    if (vidCandidate in dirObj && !isDirectoryEntry(dirObj[vidCandidate])) {
+                        const entry = dirObj[vidCandidate];
+                        const reqLevel = getEntryRequiredLevel(entry);
+                        if (!hasClearance(reqLevel)) {
+                            printLine(`ACCESS DENIED: ${vidCandidate} requires Clearance Level ${reqLevel} (Current: Level ${currentUserLevel}).`, "error-line");
+                            updatePrompt();
+                            return;
+                        }
+                        const content = getFileTextContent(entry);
+                        const mediaInfo = parseYouTubeMedia(content);
                         if (mediaInfo) {
-                            launchVideoPlayer(mediaInfo, vidCandidate, dirObj[vidCandidate]);
+                            launchVideoPlayer(mediaInfo, vidCandidate, content);
                             return;
                         }
                     }
