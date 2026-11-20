@@ -7,7 +7,7 @@ window.CONFIG.users = {
         welcomeMessage: "Welcome, System Administrator. Full access granted."
     },
     "GUEST": {
-        password: "GUEST",
+        password: "",
 	level: 1,
         welcomeMessage: "Logged in as GUEST. Some system directories may be restricted."
     },

@@ -94,6 +94,11 @@
             margin-bottom: 2px;
         }
 
+        .center-line {
+            text-align: center;
+            width: 100%;
+        }
+
         .error-line {
             color: var(--error-color);
             text-shadow: 0 0 4px var(--glow-color);
@@ -173,10 +178,11 @@
                 "BIOS Date 01/15/94 14:22:51 Ver 1.02",
                 "CPU: ATOM 86605XC 66MHz",
                 "Memory Test: 16384K OK\n",
-                "Initializing Keyboard... OK",
-                "========================================",
-                "CRYONET v3.2 - AUTHORIZED ACCESS ONLY",
-                "========================================"
+                "Initializing Keyboard... OK\n",
+                "[PROGRESS][3]LOADING SYSTEM MODULES",
+                "[CLEAR][CENTER]========================================",
+                "[CENTER]CRYONET v3.2 - AUTHORIZED ACCESS ONLY",
+                "[CENTER]========================================\n"
             ]
         };
 
@@ -235,7 +241,6 @@
             return currentUserLevel >= req;
         }
 
-        // Distinguishes a folder object from a restricted file object ({ content: "...", level: 2 })
         function isDirectoryEntry(entry) {
             return typeof entry === "object" && entry !== null && !("content" in entry);
         }
@@ -662,6 +667,7 @@
             div.textContent = text;
             outputEl.appendChild(div);
             terminalEl.scrollTop = terminalEl.scrollHeight;
+            return div;
         }
 
         function clearScreen() {
@@ -815,6 +821,39 @@
             });
         }
 
+        function runBootProgressBar(durationSeconds, label, classString, onComplete) {
+            const totalMs = Math.max(0.1, Number(durationSeconds) || 1) * 1000;
+            const barWidth = 24;
+            const startTime = performance.now();
+            const prefix = label ? `${label} ` : "";
+
+            const renderBar = (pct) => {
+                const filled = Math.round((pct / 100) * barWidth);
+                const empty = barWidth - filled;
+                const bar = "█".repeat(filled) + "░".repeat(empty);
+                const pctText = String(pct).padStart(3, " ") + "%";
+                return `${prefix}[${bar}] ${pctText}`;
+            };
+
+            const lineEl = printLine(renderBar(0), classString);
+
+            function tick(now) {
+                const elapsed = now - startTime;
+                const pct = Math.min(100, Math.floor((elapsed / totalMs) * 100));
+                lineEl.textContent = renderBar(pct);
+                terminalEl.scrollTop = terminalEl.scrollHeight;
+
+                if (elapsed < totalMs) {
+                    requestAnimationFrame(tick);
+                } else {
+                    lineEl.textContent = renderBar(100);
+                    setTimeout(onComplete, CONFIG.startup.bootDelay);
+                }
+            }
+
+            requestAnimationFrame(tick);
+        }
+
         function bootSequence() {
             inputRow.style.display = "none";
             clearScreen();
@@ -823,9 +862,55 @@
             let i = 0;
             function nextBootLine() {
                 if (i < bootLines.length) {
-                    printLine(bootLines[i], "dim-line");
+                    const entry = bootLines[i];
+                    let text = "";
+                    let classes = ["dim-line"];
+                    let shouldClear = false;
+                    let progressSeconds = null;
+
+                    if (typeof entry === "object" && entry !== null) {
+                        text = entry.text || "";
+                        shouldClear = Boolean(entry.clear);
+                        if (typeof entry.progress === "number") progressSeconds = entry.progress;
+                        if (entry.align === "center") classes.push("center-line");
+                        if (entry.className) classes.push(entry.className);
+                    } else if (typeof entry === "string") {
+                        text = entry;
+                        // Parse leading tags in any order: [CLEAR], [CENTER], [PROGRESS][N]
+                        let tagFound = true;
+                        while (tagFound) {
+                            tagFound = false;
+                            if (text.startsWith("[CLEAR]")) {
+                                shouldClear = true;
+                                text = text.slice(7);
+                                tagFound = true;
+                            }
+                            if (text.startsWith("[CENTER]")) {
+                                classes.push("center-line");
+                                text = text.slice(8);
+                                tagFound = true;
+                            }
+                            const progMatch = text.match(/^\[PROGRESS\]\[(\d+(?:\.\d+)?)\]/);
+                            if (progMatch) {
+                                progressSeconds = parseFloat(progMatch[1]);
+                                text = text.slice(progMatch[0].length);
+                                tagFound = true;
+                            }
+                        }
+                    }
+
+                    if (shouldClear) {
+                        clearScreen();
+                    }
+
                     i++;
-                    setTimeout(nextBootLine, CONFIG.startup.bootDelay);
+
+                    if (progressSeconds !== null) {
+                        runBootProgressBar(progressSeconds, text.trim(), classes.join(" "), nextBootLine);
+                    } else {
+                        printLine(text, classes.join(" "));
+                        setTimeout(nextBootLine, CONFIG.startup.bootDelay);
+                    }
                 } else {
                     const saved = getSavedCredentials();
                     if (saved) {

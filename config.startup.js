@@ -10,10 +10,26 @@ window.CONFIG.startup = {
     bootLines: [
         "BIOS Date 01/15/94 14:22:51 Ver 1.02",
         "CPU: ATOM 86605XC 66MHz",
-        "Memory Test: 16384K OK\n",
-        "Initializing Keyboard... OK",
+        "[PROGRESS][4]Memory Test: 16384K",
+	"OK\n",
+        "[PROGRESS][2]Initializing Keyboard",
+	"OK\n",
         "========================================",
         "CRYONET v3.2 - AUTHORIZED ACCESS ONLY",
-        "========================================"
+        "========================================",
+"[PROGRESS][4]INITIALIZING AOS TERMINAL",
+"[CLEAR] ",
+"[CENTER]    __           ___         _______ ",
+"[CENTER]    __          __ __       __     __",
+"[CENTER]   ____        __   __       __      ",
+"[CENTER]   _  _       __     __       ___    ",
+"[CENTER]  __  __      __     __         __   ",
+"[CENTER]  ______       __   __           __  ",
+"[CENTER] __    __       __ __       __     __",
+"[CENTER]__      __       ___         _______ ",
+" ",
+" ",
+"[CENTER]S    T    U    D    I    O    S"
+
     ]
 };
