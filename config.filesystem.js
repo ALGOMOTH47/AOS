@@ -30,16 +30,4 @@ window.CONFIG.fileSystem = {
         "CERT4.VID": "https://www.youtube.com/watch?v=aH2GdIL2WYs&list=PLa4sVvO__tjs",
         "DEPLOMA.VID": "https://www.youtube.com/watch?v=HWPR8MLdAlw&list=PLYQZEvKNfEoE"
     },
-"MODELS":{
-"ALICE.FBX": {
-            level: 1,
-            content: "https://algomoth47.github.io/AOS/Models/Alice.fbx",
-          //  texture: "models/freddy_diffuse.png"
-        },
-"ATLAS.FBX": {
-            level: 1,
-            content: "https://algomoth47.github.io/AOS/Models/Atlas.fbx",
-          
-        },
-}
 };
