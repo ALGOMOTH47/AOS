@@ -181,6 +181,7 @@
         import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
         import { STLLoader } from 'three/addons/loaders/STLLoader.js';
         import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
         window.THREE_VIEWER_DEPS = {
             THREE,
@@ -188,7 +189,8 @@
             GLTFLoader,
             OBJLoader,
             STLLoader,
-            FBXLoader
+            FBXLoader,
+            RoomEnvironment
         };
     </script>
 
@@ -356,15 +358,20 @@
                 : null;
 
             if (!format && /^\[MODEL\]/i.test(trimmed)) {
-                const target = trimmed.replace(/^\[MODEL\]/i, "").trim();
+                const target = trimmed.replace(/^\[MODEL\]/i, "").trim().replace(/\\/g, "/");
                 const extMatch = target.match(/\.(fbx|glb|gltf|obj|stl)(?:[?#].*)?$/i);
                 format = extMatch ? extMatch[1].toLowerCase() : "glb";
-                return { format, source: target, isInlineData: false, textureUrl, resourcePath };
+                return {
+                    format,
+                    source: target,
+                    isInlineData: false,
+                    textureUrl: textureUrl ? textureUrl.replace(/\\/g, "/") : null,
+                    resourcePath: resourcePath ? resourcePath.replace(/\\/g, "/") : null
+                };
             }
 
             if (!format) return null;
 
-            // Normalize Windows backslashes ("models\\freddy.fbx" -> "models/freddy.fbx")
             const cleanSource = trimmed.replace(/^\[MODEL\]/i, "").trim().replace(/\\/g, "/");
 
             const isInlineObj = format === "obj" && /^(?:#|o\s|g\s|v\s|vn\s|vt\s|f\s|mtllib\s)/m.test(cleanSource) && !/\.(obj)$/i.test(cleanSource);
@@ -386,7 +393,7 @@
                 return;
             }
 
-            const { THREE, OrbitControls, GLTFLoader, OBJLoader, STLLoader, FBXLoader } = deps;
+            const { THREE, OrbitControls, GLTFLoader, OBJLoader, STLLoader, FBXLoader, RoomEnvironment } = deps;
             state = "APP";
             clearScreen();
             terminalEl.style.display = "none";
@@ -402,6 +409,7 @@
                 modelInfo.format === "glb" ||
                 modelInfo.format === "gltf"
             );
+            let showRigCurves = false;
 
             appViewport.innerHTML = `
                 <div style="border: 1px solid ${accent}; padding: 10px; height: 100%; display: flex; flex-direction: column; justify-content: space-between; gap: 8px;">
@@ -421,6 +429,9 @@
                         <div style="display: flex; flex-wrap: wrap; gap: 6px;">
                             <button id="btn-wireframe" style="background: transparent; color: ${accent}; border: 1px solid ${accent}; padding: 3px 8px; font-family: inherit; cursor: pointer;">
                                 [ WIREFRAME: ${wireframeMode ? "ON" : "OFF"} ]
+                            </button>
+                            <button id="btn-rigs" style="background: transparent; color: ${accent}; border: 1px solid ${accent}; padding: 3px 8px; font-family: inherit; cursor: pointer;">
+                                [ RIGS: OFF ]
                             </button>
                             <button id="btn-spin" style="background: transparent; color: ${accent}; border: 1px solid ${accent}; padding: 3px 8px; font-family: inherit; cursor: pointer;">
                                 [ SPIN: ON ]
@@ -456,21 +467,29 @@
             renderer.setSize(width, height);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
             renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.15;
             canvasWrap.appendChild(renderer.domElement);
+
+            // Studio IBL environment so PBR/metallic FBX surfaces reflect light instead of pitch black
+            const pmremGenerator = new THREE.PMREMGenerator(renderer);
+            const envTexture = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+            scene.environment = envTexture;
+            scene.environmentIntensity = 0.85;
 
             const controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.07;
 
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x333333, 1.35);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
             hemiLight.position.set(0, 10, 0);
             scene.add(hemiLight);
 
-            const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+            const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
             keyLight.position.set(5, 8, 6);
             scene.add(keyLight);
 
-            const fillLight = new THREE.DirectionalLight(accent, 0.65);
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.9);
             fillLight.position.set(-5, 3, -5);
             scene.add(fillLight);
 
@@ -509,13 +528,36 @@
 
             function prepareMeshMaterials(object3D) {
                 object3D.traverse((child) => {
+                    // Hide Maya/Blender NURBS rig controller curves (blue circles/splines) by default
+                    if (child.isLine) {
+                        child.visible = showRigCurves;
+                        return;
+                    }
+
                     if (!child.isMesh) return;
+
+                    // Strip all-zero vertex color attributes that turn FBX textures pitch black
+                    if (child.geometry && child.geometry.attributes.color) {
+                        const colAttr = child.geometry.attributes.color;
+                        let allZero = true;
+                        for (let i = 0; i < Math.min(colAttr.count * colAttr.itemSize, 300); i++) {
+                            if (colAttr.array[i] > 0.01) {
+                                allZero = false;
+                                break;
+                            }
+                        }
+                        if (allZero) {
+                            child.geometry.deleteAttribute("color");
+                        }
+                    }
 
                     if (overrideTexture) {
                         child.userData.origMaterial = new THREE.MeshStandardMaterial({
                             map: overrideTexture,
-                            roughness: 0.6,
-                            metalness: 0.1
+                            color: 0xffffff,
+                            roughness: 0.55,
+                            metalness: 0.1,
+                            side: THREE.DoubleSide
                         });
                     } else if (child.material) {
                         const mats = Array.isArray(child.material) ? child.material : [child.material];
@@ -523,7 +565,21 @@
                             if (m.map) {
                                 m.map.colorSpace = THREE.SRGBColorSpace;
                                 m.map.needsUpdate = true;
+                                if (m.color) m.color.setHex(0xffffff);
                             }
+                            if (m.emissiveMap) {
+                                m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+                                m.emissiveMap.needsUpdate = true;
+                            }
+                            // Clamp Maya/FBX Phong specular reflectivity so white painted surfaces don't turn into dark mirror chrome
+                            if (typeof m.metalness === "number" && m.metalness > 0.35) {
+                                m.metalness = 0.25;
+                            }
+                            if (typeof m.roughness === "number" && m.roughness < 0.35) {
+                                m.roughness = 0.4;
+                            }
+                            m.vertexColors = Boolean(child.geometry && child.geometry.attributes.color);
+                            m.side = THREE.DoubleSide;
                             m.needsUpdate = true;
                         });
                         child.userData.origMaterial = child.material;
@@ -546,7 +602,18 @@
                 loadedRoot = object3D;
                 prepareMeshMaterials(loadedRoot);
 
-                const box = new THREE.Box3().setFromObject(loadedRoot);
+                // Compute bounding box from actual meshes only (ignoring wide rig control curves)
+                const box = new THREE.Box3();
+                loadedRoot.updateMatrixWorld(true);
+                loadedRoot.traverse((child) => {
+                    if (child.isMesh) {
+                        box.expandByObject(child);
+                    }
+                });
+                if (box.isEmpty()) {
+                    box.setFromObject(loadedRoot);
+                }
+
                 const size = box.getSize(new THREE.Vector3());
                 const center = box.getCenter(new THREE.Vector3());
                 const maxDim = Math.max(size.x, size.y, size.z) || 1;
@@ -583,8 +650,8 @@
                 scene.add(loadedRoot);
                 statusEl.style.display = "none";
 
-                camera.position.set(2.4, 1.7, 2.4);
-                controls.target.set(0, (size.y * scale) * 0.45, 0);
+                camera.position.set(0, (size.y * scale) * 0.55, 2.8);
+                controls.target.set(0, (size.y * scale) * 0.5, 0);
                 controls.update();
             }
 
@@ -676,6 +743,7 @@
 
             // Toolbar Controls
             const btnWire = appViewport.querySelector("#btn-wireframe");
+            const btnRigs = appViewport.querySelector("#btn-rigs");
             const btnSpin = appViewport.querySelector("#btn-spin");
             const btnGrid = appViewport.querySelector("#btn-grid");
             const btnReset = appViewport.querySelector("#btn-reset-cam");
@@ -685,6 +753,16 @@
                 wireframeMode = !wireframeMode;
                 btnWire.textContent = `[ WIREFRAME: ${wireframeMode ? "ON" : "OFF"} ]`;
                 applyMaterialMode();
+            };
+
+            btnRigs.onclick = () => {
+                showRigCurves = !showRigCurves;
+                btnRigs.textContent = `[ RIGS: ${showRigCurves ? "ON" : "OFF"} ]`;
+                if (loadedRoot) {
+                    loadedRoot.traverse((child) => {
+                        if (child.isLine) child.visible = showRigCurves;
+                    });
+                }
             };
 
             btnSpin.onclick = () => {
@@ -699,8 +777,8 @@
             };
 
             btnReset.onclick = () => {
-                camera.position.set(2.4, 1.7, 2.4);
-                controls.target.set(0, 0.7, 0);
+                camera.position.set(0, 1.1, 2.8);
+                controls.target.set(0, 1.0, 0);
                 controls.update();
             };
 
@@ -720,6 +798,8 @@
                 window.removeEventListener("resize", onResize);
                 document.removeEventListener("keydown", onEsc);
                 controls.dispose();
+                envTexture.dispose();
+                pmremGenerator.dispose();
                 if (overrideTexture) overrideTexture.dispose();
                 wireMaterial.dispose();
                 solidFallbackMaterial.dispose();
