@@ -3,7 +3,8 @@ window.CONFIG = window.CONFIG || {};
 window.CONFIG.fileSystem = {
     "CRYONET": {
         _level: 3,
-        "CRYONET.EXE": "BINARY"
+        "CRYONET.EXE": "BINARY",
+       
     },
 
     "DOCS": {
@@ -20,19 +21,25 @@ window.CONFIG.fileSystem = {
     "OBILISK": {
         _level: 1,
         "PLAYLIST.VID": "https://www.youtube.com/playlist?list=PLS7zAjy7SF9U",
-	_level: 1,
-	"OBILISK_NOTES.TXT": "obilisk what can i say about obilisk it was a passion project but as my second game it was a challange.  if you want to play it here the link: [LINK]https://algomoth47.github.io/AOS/obilisk.html.  anyway hope you have fun playing it.",
-
-	
+        "OBILISK_NOTES.TXT": "obilisk what can i say about obilisk it was a passion project but as my second game it was a challange.  if you want to play it here the link: [LINK]https://algomoth47.github.io/AOS/obilisk.html.  anyway hope you have fun playing it."
     },
 
     "TAFE_PROJECTS": {
         _level: 1,
         "CERT3.VID": "https://www.youtube.com/watch?v=Shs0anEodak&list=PLb5ep_dhkyWI",
- 	_level: 1,
-	"CERT4.VID": "https://www.youtube.com/watch?v=aH2GdIL2WYs&list=PLa4sVvO__tjs",
- 	_level: 1,
-	"DEPLOMA.VID": "https://www.youtube.com/watch?v=HWPR8MLdAlw&list=PLYQZEvKNfEoE"
-	
-    }
+        "CERT4.VID": "https://www.youtube.com/watch?v=aH2GdIL2WYs&list=PLa4sVvO__tjs",
+        "DEPLOMA.VID": "https://www.youtube.com/watch?v=HWPR8MLdAlw&list=PLYQZEvKNfEoE"
+    },
+"MODELS":{
+"ALICE.FBX": {
+            level: 1,
+            content: "models/Alice.fbx",
+          //  texture: "models/freddy_diffuse.png"
+        },
+"ATLAS.FBX": {
+            level: 1,
+            content: "Atlas.fbx",
+          
+        },
+}
 };

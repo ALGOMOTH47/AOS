@@ -76,7 +76,7 @@
             display: none;
         }
 
-        /* Fullscreen container for running .EXE files and Media Player */
+        /* Fullscreen container for running .EXE files, Media Player, and 3D Viewer */
         #app-viewport {
             display: none;
             height: 100%;
@@ -142,6 +142,16 @@
             text-shadow: 0 0 4px var(--glow-color);
         }
     </style>
+
+    <!-- Import Map for Three.js 3D Model Viewer -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+    }
+    </script>
 </head>
 <body>
     <div id="crt-frame">
@@ -152,7 +162,7 @@
                 <input type="text" id="cmd-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
             </div>
         </div>
-        <!-- Dedicated screen surface for .EXE programs and Media Playback -->
+        <!-- Dedicated screen surface for .EXE programs, Media Playback, and 3D Viewer -->
         <div id="app-viewport"></div>
     </div>
 
@@ -162,6 +172,25 @@
     <script src="config.users.js" data-config-file="config.users.js"></script>
     <script src="config.filesystem.js" data-config-file="config.filesystem.js"></script>
     <script src="config.executables.js" data-config-file="config.executables.js"></script>
+
+    <!-- Three.js Module Loader Bridge -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+        window.THREE_VIEWER_DEPS = {
+            THREE,
+            OrbitControls,
+            GLTFLoader,
+            OBJLoader,
+            STLLoader,
+            FBXLoader
+        };
+    </script>
 
     <script>
         // =========================================================================
@@ -240,17 +269,23 @@
         applyConfigStyle();
 
         // =========================================================================
-        // CLEARANCE LEVEL HELPERS (Levels 1 - 3)
+        // CLEARANCE LEVEL & OVERRIDE PASSWORD HELPERS (Levels 1 - 3)
         // =========================================================================
+        let unlockedOverrides = new Set();
+        let pendingOverride = null; // { key, password, label, onSuccess }
+
         function getUserLevel(username) {
+            if (username === "GUEST") return 1;
             const rec = CONFIG.users[username];
             if (!rec || typeof rec.level !== "number") return 1;
             return Math.max(1, Math.min(3, Math.floor(rec.level)));
         }
 
-        function hasClearance(requiredLevel) {
+        function hasClearance(requiredLevel, overrideKey = null) {
             const req = typeof requiredLevel === "number" ? requiredLevel : 1;
-            return currentUserLevel >= req;
+            if (currentUserLevel >= req) return true;
+            if (overrideKey && unlockedOverrides.has(overrideKey)) return true;
+            return false;
         }
 
         function isDirectoryEntry(entry) {
@@ -265,12 +300,455 @@
             return 1;
         }
 
+        function getEntryPassword(entry, exeDef = null) {
+            if (typeof entry === "object" && entry !== null) {
+                if (typeof entry._password === "string" && entry._password !== "") return entry._password;
+                if (typeof entry.password === "string" && entry.password !== "") return entry.password;
+            }
+            if (typeof exeDef === "object" && exeDef !== null) {
+                if (typeof exeDef.password === "string" && exeDef.password !== "") return exeDef.password;
+            }
+            return null;
+        }
+
         function getFileTextContent(entry) {
             if (typeof entry === "string") return entry;
             if (typeof entry === "object" && entry !== null && typeof entry.content === "string") {
                 return entry.content;
             }
             return "";
+        }
+
+        function promptOverridePassword(overrideKey, password, reqLevel, label, onSuccess) {
+            pendingOverride = {
+                key: overrideKey,
+                password: password,
+                label: label,
+                onSuccess: onSuccess
+            };
+            state = "OVERRIDE_PASS";
+            printLine(`CLEARANCE LEVEL ${reqLevel} REQUIRED FOR ${label} (Current: Level ${currentUserLevel})`, "dim-line");
+            updatePrompt();
+        }
+
+        // =========================================================================
+        // 3D MODEL FILE DETECTOR & INTERACTIVE THREE.JS VIEWER (FBX, GLB, OBJ, STL)
+        // =========================================================================
+        const MODEL_EXTENSIONS = [".FBX", ".GLB", ".GLTF", ".OBJ", ".STL"];
+
+        function parse3DModelEntry(fileName, content, entryObj = null) {
+            const upperName = fileName.toUpperCase();
+            const trimmed = (content || "").trim();
+
+            let format = null;
+            for (const ext of MODEL_EXTENSIONS) {
+                if (upperName.endsWith(ext)) {
+                    format = ext.slice(1).toLowerCase();
+                    break;
+                }
+            }
+
+            const textureUrl = (entryObj && typeof entryObj === "object" && typeof entryObj.texture === "string")
+                ? entryObj.texture.trim()
+                : null;
+            const resourcePath = (entryObj && typeof entryObj === "object" && typeof entryObj.resourcePath === "string")
+                ? entryObj.resourcePath.trim()
+                : null;
+
+            if (!format && /^\[MODEL\]/i.test(trimmed)) {
+                const target = trimmed.replace(/^\[MODEL\]/i, "").trim();
+                const extMatch = target.match(/\.(fbx|glb|gltf|obj|stl)(?:[?#].*)?$/i);
+                format = extMatch ? extMatch[1].toLowerCase() : "glb";
+                return { format, source: target, isInlineData: false, textureUrl, resourcePath };
+            }
+
+            if (!format) return null;
+
+            // Normalize Windows backslashes ("models\\freddy.fbx" -> "models/freddy.fbx")
+            const cleanSource = trimmed.replace(/^\[MODEL\]/i, "").trim().replace(/\\/g, "/");
+
+            const isInlineObj = format === "obj" && /^(?:#|o\s|g\s|v\s|vn\s|vt\s|f\s|mtllib\s)/m.test(cleanSource) && !/\.(obj)$/i.test(cleanSource);
+            const isInlineStl = format === "stl" && /^solid\s/i.test(cleanSource) && /endsolid/i.test(cleanSource);
+
+            return {
+                format,
+                source: cleanSource,
+                isInlineData: isInlineObj || isInlineStl,
+                textureUrl: textureUrl ? textureUrl.replace(/\\/g, "/") : null,
+                resourcePath: resourcePath ? resourcePath.replace(/\\/g, "/") : null
+            };
+        }
+
+        function launchModelViewer(modelInfo, fileName) {
+            const deps = window.THREE_VIEWER_DEPS;
+            if (!deps) {
+                printLine("3D SUBSYSTEM ERROR: Three.js module still initializing or blocked by network/CSP.", "error-line");
+                return;
+            }
+
+            const { THREE, OrbitControls, GLTFLoader, OBJLoader, STLLoader, FBXLoader } = deps;
+            state = "APP";
+            clearScreen();
+            terminalEl.style.display = "none";
+            appViewport.innerHTML = "";
+            appViewport.style.display = "block";
+
+            const accent = CONFIG.style.textColor;
+            const bg = CONFIG.style.bgColor;
+
+            let wireframeMode = !(
+                modelInfo.textureUrl ||
+                modelInfo.format === "fbx" ||
+                modelInfo.format === "glb" ||
+                modelInfo.format === "gltf"
+            );
+
+            appViewport.innerHTML = `
+                <div style="border: 1px solid ${accent}; padding: 10px; height: 100%; display: flex; flex-direction: column; justify-content: space-between; gap: 8px;">
+                    <div style="background: ${accent}; color: ${bg}; padding: 4px 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+                        <span>CRYONET 3D CAD VIEWER // ${fileName}</span>
+                        <span>FORMAT: ${modelInfo.format.toUpperCase()}</span>
+                    </div>
+
+                    <div id="model-canvas-wrap" style="flex: 1; border: 1px solid ${accent}; background: ${bg}; position: relative; overflow: hidden;">
+                        <div id="model-status" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; z-index: 2; max-width: 90%; word-break: break-word;">
+                            LOADING MESH & TEXTURES...
+                        </div>
+                    </div>
+
+                    <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; font-size: 13px;">
+                        <span id="model-stats">VERTS: 0 | TRIS: 0</span>
+                        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                            <button id="btn-wireframe" style="background: transparent; color: ${accent}; border: 1px solid ${accent}; padding: 3px 8px; font-family: inherit; cursor: pointer;">
+                                [ WIREFRAME: ${wireframeMode ? "ON" : "OFF"} ]
+                            </button>
+                            <button id="btn-spin" style="background: transparent; color: ${accent}; border: 1px solid ${accent}; padding: 3px 8px; font-family: inherit; cursor: pointer;">
+                                [ SPIN: ON ]
+                            </button>
+                            <button id="btn-grid" style="background: transparent; color: ${accent}; border: 1px solid ${accent}; padding: 3px 8px; font-family: inherit; cursor: pointer;">
+                                [ GRID: ON ]
+                            </button>
+                            <button id="btn-reset-cam" style="background: transparent; color: ${accent}; border: 1px solid ${accent}; padding: 3px 8px; font-family: inherit; cursor: pointer;">
+                                [ RESET ]
+                            </button>
+                            <button id="btn-close-model" style="background: ${accent}; color: ${bg}; border: none; padding: 3px 10px; font-family: inherit; font-weight: bold; cursor: pointer;">
+                                [ EXIT ]
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const canvasWrap = appViewport.querySelector("#model-canvas-wrap");
+            const statusEl = appViewport.querySelector("#model-status");
+            const statsEl = appViewport.querySelector("#model-stats");
+
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(bg);
+
+            const width = canvasWrap.clientWidth || 640;
+            const height = canvasWrap.clientHeight || 400;
+
+            const camera = new THREE.PerspectiveCamera(45, width / height, 0.01, 1000);
+            camera.position.set(2.5, 1.8, 2.5);
+
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            canvasWrap.appendChild(renderer.domElement);
+
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.07;
+
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x333333, 1.35);
+            hemiLight.position.set(0, 10, 0);
+            scene.add(hemiLight);
+
+            const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+            keyLight.position.set(5, 8, 6);
+            scene.add(keyLight);
+
+            const fillLight = new THREE.DirectionalLight(accent, 0.65);
+            fillLight.position.set(-5, 3, -5);
+            scene.add(fillLight);
+
+            const gridHelper = new THREE.GridHelper(6, 16, new THREE.Color(accent), new THREE.Color(accent));
+            gridHelper.material.opacity = 0.25;
+            gridHelper.material.transparent = true;
+            scene.add(gridHelper);
+
+            let loadedRoot = null;
+            let autoSpin = true;
+            let showGrid = true;
+            let animFrameId = null;
+            let disposed = false;
+            let overrideTexture = null;
+
+            const wireMaterial = new THREE.MeshBasicMaterial({
+                color: new THREE.Color(accent),
+                wireframe: true
+            });
+
+            const solidFallbackMaterial = new THREE.MeshStandardMaterial({
+                color: new THREE.Color(accent),
+                roughness: 0.5,
+                metalness: 0.2
+            });
+
+            if (modelInfo.textureUrl) {
+                const texLoader = new THREE.TextureLoader();
+                texLoader.setCrossOrigin("anonymous");
+                overrideTexture = texLoader.load(modelInfo.textureUrl, (tex) => {
+                    tex.colorSpace = THREE.SRGBColorSpace;
+                    tex.flipY = !(modelInfo.format === "glb" || modelInfo.format === "gltf");
+                    tex.needsUpdate = true;
+                });
+            }
+
+            function prepareMeshMaterials(object3D) {
+                object3D.traverse((child) => {
+                    if (!child.isMesh) return;
+
+                    if (overrideTexture) {
+                        child.userData.origMaterial = new THREE.MeshStandardMaterial({
+                            map: overrideTexture,
+                            roughness: 0.6,
+                            metalness: 0.1
+                        });
+                    } else if (child.material) {
+                        const mats = Array.isArray(child.material) ? child.material : [child.material];
+                        mats.forEach((m) => {
+                            if (m.map) {
+                                m.map.colorSpace = THREE.SRGBColorSpace;
+                                m.map.needsUpdate = true;
+                            }
+                            m.needsUpdate = true;
+                        });
+                        child.userData.origMaterial = child.material;
+                    } else {
+                        child.userData.origMaterial = solidFallbackMaterial;
+                    }
+                });
+            }
+
+            function applyMaterialMode() {
+                if (!loadedRoot) return;
+                loadedRoot.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material = wireframeMode ? wireMaterial : child.userData.origMaterial;
+                    }
+                });
+            }
+
+            function frameLoadedObject(object3D) {
+                loadedRoot = object3D;
+                prepareMeshMaterials(loadedRoot);
+
+                const box = new THREE.Box3().setFromObject(loadedRoot);
+                const size = box.getSize(new THREE.Vector3());
+                const center = box.getCenter(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z) || 1;
+                const scale = 2.2 / maxDim;
+
+                loadedRoot.scale.multiplyScalar(scale);
+                loadedRoot.position.set(
+                    -center.x * scale,
+                    -box.min.y * scale,
+                    -center.z * scale
+                );
+
+                let vertCount = 0;
+                let triCount = 0;
+                let texCount = 0;
+                loadedRoot.traverse((child) => {
+                    if (child.isMesh && child.geometry) {
+                        const pos = child.geometry.attributes.position;
+                        if (pos) vertCount += pos.count;
+                        if (child.geometry.index) {
+                            triCount += Math.floor(child.geometry.index.count / 3);
+                        } else if (pos) {
+                            triCount += Math.floor(pos.count / 3);
+                        }
+                        const mats = Array.isArray(child.userData.origMaterial)
+                            ? child.userData.origMaterial
+                            : [child.userData.origMaterial];
+                        mats.forEach((m) => { if (m && m.map) texCount++; });
+                    }
+                });
+
+                statsEl.textContent = `VERTS: ${vertCount.toLocaleString()} | TRIS: ${triCount.toLocaleString()}${texCount > 0 ? ` | TEX: ${texCount}` : ""}`;
+                applyMaterialMode();
+                scene.add(loadedRoot);
+                statusEl.style.display = "none";
+
+                camera.position.set(2.4, 1.7, 2.4);
+                controls.target.set(0, (size.y * scale) * 0.45, 0);
+                controls.update();
+            }
+
+            function handleLoadError(err) {
+                if (disposed) return;
+                console.error("3D Loader Error:", err);
+                const isLocalFileProtocol = window.location.protocol === "file:";
+                const detail = err && err.message ? err.message : "Network / 404 / CORS error";
+                const resolvedUrl = modelInfo.source ? new URL(modelInfo.source, window.location.href).href : "(empty path)";
+
+                statusEl.innerHTML = [
+                    `<div>ERROR LOADING 3D ASSET</div>`,
+                    `<div style="margin-top:6px; font-size:13px;">PATH: ${resolvedUrl}</div>`,
+                    `<div style="margin-top:4px; font-size:13px;">REASON: ${detail}</div>`,
+                    isLocalFileProtocol
+                        ? `<div style="margin-top:8px; font-size:12px;">NOTE: Browsers block loading .FBX/.GLB files from file:// URLs. Serve via Live Server or GitHub Pages.</div>`
+                        : ""
+                ].join("");
+            }
+
+            if (!modelInfo.source && !modelInfo.isInlineData) {
+                handleLoadError(new Error("No file path specified in config.filesystem.js"));
+            } else {
+                try {
+                    if (modelInfo.format === "fbx") {
+                        const loader = new FBXLoader();
+                        loader.setCrossOrigin("anonymous");
+                        if (modelInfo.resourcePath) {
+                            loader.setResourcePath(modelInfo.resourcePath);
+                        }
+                        loader.load(
+                            modelInfo.source,
+                            (fbxGroup) => { if (!disposed) frameLoadedObject(fbxGroup); },
+                            undefined,
+                            handleLoadError
+                        );
+                    } else if (modelInfo.format === "glb" || modelInfo.format === "gltf") {
+                        const loader = new GLTFLoader();
+                        loader.setCrossOrigin("anonymous");
+                        if (modelInfo.resourcePath) {
+                            loader.setResourcePath(modelInfo.resourcePath);
+                        }
+                        loader.load(
+                            modelInfo.source,
+                            (gltf) => { if (!disposed) frameLoadedObject(gltf.scene); },
+                            undefined,
+                            handleLoadError
+                        );
+                    } else if (modelInfo.format === "obj") {
+                        const loader = new OBJLoader();
+                        if (modelInfo.isInlineData) {
+                            const obj = loader.parse(modelInfo.source);
+                            frameLoadedObject(obj);
+                        } else {
+                            loader.load(
+                                modelInfo.source,
+                                (obj) => { if (!disposed) frameLoadedObject(obj); },
+                                undefined,
+                                handleLoadError
+                            );
+                        }
+                    } else if (modelInfo.format === "stl") {
+                        const loader = new STLLoader();
+                        if (modelInfo.isInlineData) {
+                            const geo = loader.parse(modelInfo.source);
+                            geo.computeVertexNormals();
+                            const mesh = new THREE.Mesh(geo, solidFallbackMaterial);
+                            mesh.rotation.x = -Math.PI / 2;
+                            frameLoadedObject(mesh);
+                        } else {
+                            loader.load(
+                                modelInfo.source,
+                                (geo) => {
+                                    if (disposed) return;
+                                    geo.computeVertexNormals();
+                                    const mesh = new THREE.Mesh(geo, solidFallbackMaterial);
+                                    mesh.rotation.x = -Math.PI / 2;
+                                    frameLoadedObject(mesh);
+                                },
+                                undefined,
+                                handleLoadError
+                            );
+                        }
+                    }
+                } catch (e) {
+                    handleLoadError(e);
+                }
+            }
+
+            // Toolbar Controls
+            const btnWire = appViewport.querySelector("#btn-wireframe");
+            const btnSpin = appViewport.querySelector("#btn-spin");
+            const btnGrid = appViewport.querySelector("#btn-grid");
+            const btnReset = appViewport.querySelector("#btn-reset-cam");
+            const btnClose = appViewport.querySelector("#btn-close-model");
+
+            btnWire.onclick = () => {
+                wireframeMode = !wireframeMode;
+                btnWire.textContent = `[ WIREFRAME: ${wireframeMode ? "ON" : "OFF"} ]`;
+                applyMaterialMode();
+            };
+
+            btnSpin.onclick = () => {
+                autoSpin = !autoSpin;
+                btnSpin.textContent = `[ SPIN: ${autoSpin ? "ON" : "OFF"} ]`;
+            };
+
+            btnGrid.onclick = () => {
+                showGrid = !showGrid;
+                gridHelper.visible = showGrid;
+                btnGrid.textContent = `[ GRID: ${showGrid ? "ON" : "OFF"} ]`;
+            };
+
+            btnReset.onclick = () => {
+                camera.position.set(2.4, 1.7, 2.4);
+                controls.target.set(0, 0.7, 0);
+                controls.update();
+            };
+
+            const onResize = () => {
+                if (disposed) return;
+                const w = canvasWrap.clientWidth || 640;
+                const h = canvasWrap.clientHeight || 400;
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h);
+            };
+            window.addEventListener("resize", onResize);
+
+            const closeViewer = () => {
+                disposed = true;
+                if (animFrameId) cancelAnimationFrame(animFrameId);
+                window.removeEventListener("resize", onResize);
+                document.removeEventListener("keydown", onEsc);
+                controls.dispose();
+                if (overrideTexture) overrideTexture.dispose();
+                wireMaterial.dispose();
+                solidFallbackMaterial.dispose();
+                renderer.dispose();
+
+                appViewport.innerHTML = "";
+                appViewport.style.display = "none";
+                terminalEl.style.display = "block";
+                state = "SHELL";
+                printLine(`Closed 3D CAD viewer: ${fileName}`);
+                updatePrompt();
+            };
+
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeViewer();
+            };
+            document.addEventListener("keydown", onEsc);
+            btnClose.onclick = closeViewer;
+
+            function animate() {
+                if (disposed) return;
+                animFrameId = requestAnimationFrame(animate);
+                if (loadedRoot && autoSpin) {
+                    loadedRoot.rotation.y += 0.008;
+                }
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            animate();
         }
 
         // =========================================================================
@@ -282,7 +760,6 @@
                 : `https://${rawTarget}`;
         }
 
-        // Standalone [LINK] file (entire file is just "[LINK]...")
         function parseStandaloneLinkFile(text) {
             if (typeof text !== "string") return null;
             const trimmed = text.trim();
@@ -313,7 +790,6 @@
             window.open(linkInfo.url, "_blank", "noopener,noreferrer");
         }
 
-        // Renders text that contains inline [LINK]url tags as clickable <a> elements
         function printRichText(text, className = "") {
             if (text === "" || text === null || text === undefined) return;
             const div = document.createElement("div");
@@ -328,7 +804,6 @@
                     div.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
                 }
 
-                // Separate any trailing sentence punctuation (like "." or ",") from the URL
                 const fullToken = match[1];
                 const cleanTarget = fullToken.replace(/[.,;:!?)]+$/, "");
                 const trailingPunct = fullToken.slice(cleanTarget.length);
@@ -446,7 +921,7 @@
             syncConfigFromWindow();
             applyConfigStyle();
 
-            if (currentUser && !CONFIG.users[currentUser]) {
+            if (currentUser && currentUser !== "GUEST" && !CONFIG.users[currentUser]) {
                 clearSavedCredentials();
                 printLine(`\nUser "${currentUser}" no longer exists in config.users.js. Logging out...\n`, "error-line");
                 startLogin();
@@ -457,12 +932,12 @@
                 currentUserLevel = getUserLevel(currentUser);
             }
 
-            // Re-validate current folder path & clearance level
             let checkObj = CONFIG.fileSystem;
             let validPath = [];
             for (const folder of currentPath) {
                 const nextObj = checkObj ? checkObj[folder] : null;
-                if (isDirectoryEntry(nextObj) && hasClearance(getEntryRequiredLevel(nextObj))) {
+                const folderKey = `DIR:${[...validPath, folder].join("\\")}`;
+                if (isDirectoryEntry(nextObj) && hasClearance(getEntryRequiredLevel(nextObj), folderKey)) {
                     validPath.push(folder);
                     checkObj = nextObj;
                 } else {
@@ -577,39 +1052,64 @@
         // =========================================================================
         // UNIFIED FILE OPENER (Direct filename or TYPE command)
         // =========================================================================
-        function openFileEntry(fileName, args = []) {
-            const dirObj = getCurrentDirObject();
-            const entry = dirObj[fileName];
-            const reqLevel = getEntryRequiredLevel(entry);
-
-            if (!hasClearance(reqLevel)) {
-                printLine(`ACCESS DENIED: ${fileName} requires Clearance Level ${reqLevel} (Current: Level ${currentUserLevel}).`, "error-line");
-                return;
-            }
-
+        function executeOpenedFile(fileName, entry, args = []) {
             if (fileName.endsWith(".EXE")) {
-                launchExecutable(fileName, args, reqLevel);
+                launchExecutable(fileName, args, getEntryRequiredLevel(entry), true);
                 return;
             }
 
             const content = getFileTextContent(entry);
 
-            // 1. Standalone [LINK] file -> open immediately in new tab
+            // 1. 3D Model File (.FBX, .GLB, .GLTF, .OBJ, .STL or [MODEL] tag)
+            const modelInfo = parse3DModelEntry(fileName, content, entry);
+            if (modelInfo) {
+                launchModelViewer(modelInfo, fileName);
+                return;
+            }
+
+            // 2. Standalone [LINK] file -> open immediately in new tab
             const linkInfo = parseStandaloneLinkFile(content);
             if (linkInfo) {
                 openExternalLink(linkInfo, fileName);
                 return;
             }
 
-            // 2. YouTube video/playlist -> open embedded CRT media player
+            // 3. YouTube video/playlist -> open embedded CRT media player
             const mediaInfo = parseYouTubeMedia(content);
             if (mediaInfo) {
                 launchVideoPlayer(mediaInfo, fileName, content);
                 return;
             }
 
-            // 3. Text file (supports inline [LINK]url tags as clickable links)
+            // 4. Text file (supports inline [LINK]url tags as clickable links)
             printRichText(content);
+        }
+
+        function openFileEntry(fileName, args = []) {
+            const dirObj = getCurrentDirObject();
+            const entry = dirObj[fileName];
+            const exeDef = fileName.endsWith(".EXE") ? CONFIG.executables[fileName] : null;
+
+            let reqLevel = getEntryRequiredLevel(entry);
+            if (typeof exeDef === "object" && exeDef !== null && typeof exeDef.level === "number") {
+                reqLevel = Math.max(reqLevel, exeDef.level);
+            }
+
+            const fileKey = `FILE:${[...currentPath, fileName].join("\\")}`;
+            const overridePass = getEntryPassword(entry, exeDef);
+
+            if (!hasClearance(reqLevel, fileKey)) {
+                if (overridePass) {
+                    promptOverridePassword(fileKey, overridePass, reqLevel, fileName, () => {
+                        executeOpenedFile(fileName, entry, args);
+                    });
+                } else {
+                    printLine(`ACCESS DENIED: ${fileName} requires Clearance Level ${reqLevel} (Current: Level ${currentUserLevel}).`, "error-line");
+                }
+                return;
+            }
+
+            executeOpenedFile(fileName, entry, args);
         }
 
         // =========================================================================
@@ -622,7 +1122,7 @@
                 execute: (args, ctx) => {
                     let lines = [
                         `Available commands (Clearance Level ${ctx.userLevel}):`,
-                        "  <FILENAME> - Opens a text file, link, video, or executable directly."
+                        "  <FILENAME> - Opens a text file, 3D model, link, video, or executable."
                     ];
                     for (const [cmd, info] of Object.entries(COMMANDS)) {
                         if (hasClearance(info.minLevel)) {
@@ -650,15 +1150,32 @@
 
                     for (const [name, entry] of entries) {
                         const reqLevel = getEntryRequiredLevel(entry);
-                        const lockTag = reqLevel > 1 ? ` [LVL ${reqLevel}${hasClearance(reqLevel) ? "" : " - LOCKED"}]` : "";
+                        const isDir = isDirectoryEntry(entry);
+                        const itemKey = `${isDir ? "DIR" : "FILE"}:${[...ctx.currentPath, name].join("\\")}`;
+                        const unlocked = hasClearance(reqLevel, itemKey);
+                        const hasPass = Boolean(getEntryPassword(entry, !isDir && name.endsWith(".EXE") ? CONFIG.executables[name] : null));
 
-                        if (isDirectoryEntry(entry)) {
+                        let lockTag = "";
+                        if (reqLevel > 1) {
+                            if (unlocked) {
+                                lockTag = ` [LVL ${reqLevel}]`;
+                            } else {
+                                lockTag = hasPass ? ` [LVL ${reqLevel} - PASSWORD]` : ` [LVL ${reqLevel} - LOCKED]`;
+                            }
+                        }
+
+                        if (isDir) {
                             out.push(`  ${name.padEnd(12)} <DIR>${lockTag}`);
                             dirCount++;
                         } else {
                             const content = getFileTextContent(entry);
                             const isStandaloneLink = Boolean(parseStandaloneLinkFile(content));
-                            const meta = isStandaloneLink ? "   <LINK>" : `${String(content.length).padStart(8, " ")} bytes`;
+                            const is3DModel = Boolean(parse3DModelEntry(name, content, entry));
+
+                            let meta = `${String(content.length).padStart(8, " ")} bytes`;
+                            if (isStandaloneLink) meta = "   <LINK>";
+                            else if (is3DModel) meta = "   <3D>";
+
                             out.push(`  ${name.padEnd(12)} ${meta}${lockTag}`);
                             fileCount++;
                         }
@@ -691,7 +1208,16 @@
 
                     if (isDirectoryEntry(entry)) {
                         const reqLevel = getEntryRequiredLevel(entry);
-                        if (!hasClearance(reqLevel)) {
+                        const dirKey = `DIR:${[...ctx.currentPath, target].join("\\")}`;
+
+                        if (!hasClearance(reqLevel, dirKey)) {
+                            const overridePass = getEntryPassword(entry);
+                            if (overridePass) {
+                                promptOverridePassword(dirKey, overridePass, reqLevel, target, () => {
+                                    currentPath.push(target);
+                                });
+                                return { asyncHandled: true };
+                            }
                             return { error: `ACCESS DENIED: ${target} requires Clearance Level ${reqLevel} (Current: Level ${ctx.userLevel}).` };
                         }
                         ctx.currentPath.push(target);
@@ -702,7 +1228,7 @@
             },
             TYPE: {
                 minLevel: 1,
-                description: "Displays a text file, opens a link, or plays a video.",
+                description: "Displays a text file, 3D model, link, or video.",
                 execute: (args, ctx) => {
                     if (!args[0]) return { error: "Required parameter missing" };
                     const fileName = args[0].toUpperCase();
@@ -777,7 +1303,7 @@
         const terminalEl = document.getElementById("terminal");
         const appViewport = document.getElementById("app-viewport");
 
-        let state = "BOOT"; // BOOT | AUTO_LOGIN | LOGIN_USER | LOGIN_PASS | SHELL | APP
+        let state = "BOOT"; // BOOT | AUTO_LOGIN | LOGIN_USER | LOGIN_PASS | OVERRIDE_PASS | SHELL | APP
         let pendingUser = "";
         let currentUser = null;
         let currentUserLevel = 1;
@@ -811,7 +1337,7 @@
             return obj;
         }
 
-        function launchExecutable(exeName, args, fileReqLevel = 1) {
+        function launchExecutable(exeName, args, fileReqLevel = 1, bypassClearanceCheck = false) {
             const exeDef = CONFIG.executables[exeName];
             let handler = null;
             let exeMinLevel = fileReqLevel;
@@ -825,7 +1351,7 @@
                 }
             }
 
-            if (!hasClearance(exeMinLevel)) {
+            if (!bypassClearanceCheck && !hasClearance(exeMinLevel)) {
                 printLine(`ACCESS DENIED: ${exeName} requires Clearance Level ${exeMinLevel} (Current: Level ${currentUserLevel}).`, "error-line");
                 return;
             }
@@ -871,6 +1397,10 @@
                 promptLabel.textContent = "PASSWORD: ";
                 cmdInput.type = "password";
                 cmdInput.readOnly = false;
+            } else if (state === "OVERRIDE_PASS") {
+                promptLabel.textContent = "OVERRIDE PASSWORD: ";
+                cmdInput.type = "password";
+                cmdInput.readOnly = false;
             } else if (state === "SHELL") {
                 promptLabel.textContent = `${getPathString()}>`;
                 cmdInput.type = "text";
@@ -885,6 +1415,8 @@
         function onSessionAuthenticated(userKey, userRecord) {
             currentUser = userKey;
             currentUserLevel = getUserLevel(userKey);
+            unlockedOverrides.clear();
+            pendingOverride = null;
             pendingUser = "";
             state = "SHELL";
             printLine(`\n[CLEARANCE LEVEL ${currentUserLevel} VERIFIED]`);
@@ -903,6 +1435,8 @@
         function startLogin() {
             state = "LOGIN_USER";
             pendingUser = "";
+            pendingOverride = null;
+            unlockedOverrides.clear();
             currentUser = null;
             currentUserLevel = 1;
             currentPath = [];
@@ -1051,12 +1585,18 @@
             if (state === "AUTO_LOGIN" || state === "BOOT") return;
 
             if (state === "LOGIN_USER") {
-                printLine(`LOGIN: ${rawValue}`);
                 const userKey = rawValue.trim().toUpperCase();
                 if (!userKey) {
-                    updatePrompt();
+                    printLine("LOGIN: GUEST");
+                    const guestRecord = Object.assign(
+                        { welcomeMessage: "Logged in as GUEST (Limited Access). Type HELP for commands." },
+                        CONFIG.users.GUEST || {},
+                        { level: 1 }
+                    );
+                    onSessionAuthenticated("GUEST", guestRecord);
                     return;
                 }
+                printLine(`LOGIN: ${rawValue}`);
                 pendingUser = userKey;
                 state = "LOGIN_PASS";
                 updatePrompt();
@@ -1073,6 +1613,26 @@
                     printLine("ACCESS DENIED: Invalid username or password.\n", "error-line");
                     state = "LOGIN_USER";
                     pendingUser = "";
+                    updatePrompt();
+                }
+                return;
+            }
+
+            if (state === "OVERRIDE_PASS") {
+                printLine(`OVERRIDE PASSWORD: ${"*".repeat(rawValue.length)}`);
+                const currentOverride = pendingOverride;
+                pendingOverride = null;
+                state = "SHELL";
+
+                if (currentOverride && rawValue === currentOverride.password) {
+                    unlockedOverrides.add(currentOverride.key);
+                    printLine(`OVERRIDE ACCEPTED: ${currentOverride.label} unlocked.\n`, "dim-line");
+                    currentOverride.onSuccess();
+                } else {
+                    printLine("ACCESS DENIED: Invalid override password.\n", "error-line");
+                }
+
+                if (state === "SHELL") {
                     updatePrompt();
                 }
                 return;
@@ -1127,15 +1687,15 @@
                 } else if (!cmdName.startsWith("_")) {
                     const dirObj = getCurrentDirObject();
 
-                    // 1. Exact file match in current directory (.TXT, .EXE, .VID, .LNK, etc.)
+                    // 1. Exact file match in current directory (.TXT, .EXE, .VID, .LNK, .FBX, .GLB, .GLTF, .OBJ, .STL)
                     if (cmdName in dirObj && !isDirectoryEntry(dirObj[cmdName])) {
                         openFileEntry(cmdName, args);
                         if (state === "SHELL") updatePrompt();
                         return;
                     }
 
-                    // 2. Shorthand matches without extension (.EXE, .VID, .LNK)
-                    for (const ext of [".EXE", ".VID", ".LNK"]) {
+                    // 2. Shorthand matches without extension
+                    for (const ext of [".EXE", ".VID", ".LNK", ".FBX", ".GLB", ".GLTF", ".OBJ", ".STL"]) {
                         const candidate = `${cmdName}${ext}`;
                         if (candidate in dirObj && !isDirectoryEntry(dirObj[candidate])) {
                             openFileEntry(candidate, args);
