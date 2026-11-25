@@ -33,12 +33,12 @@ window.CONFIG.fileSystem = {
 "MODELS":{
 "ALICE.FBX": {
             level: 1,
-            content: "models/Alice.fbx",
+            content: "https://algomoth47.github.io/AOS/Models/Alice.fbx",
           //  texture: "models/freddy_diffuse.png"
         },
 "ATLAS.FBX": {
             level: 1,
-            content: "Atlas.fbx",
+            content: "https://algomoth47.github.io/AOS/Models/Atlas.fbx",
           
         },
 }
